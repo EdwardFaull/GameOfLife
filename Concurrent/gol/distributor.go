@@ -31,6 +31,7 @@ func distributor(p Params, c distributorChannels) {
 		world = calculateNextState(p, world, c, x)
 		c.events <- TurnComplete{CompletedTurns: x}
 	}
+	//TODO: c.events <- FinalTurnComplete{CompletedTurns: x}
 
 	// TODO: Send correct Events when required, e.g. CellFlipped, TurnComplete and FinalTurnComplete.
 	//		 See event.go for a list of all events.
@@ -42,6 +43,55 @@ func distributor(p Params, c distributorChannels) {
 	c.events <- StateChange{turn, Quitting}
 	// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
 	close(c.events)
+}
+
+func calculateNextState(p Params, world [][]byte, c distributorChannels, completedTurns int) [][]byte {
+	h := p.ImageHeight
+	w := p.ImageWidth
+	nworld := make([][]byte, h, w)
+	for y, a := range world {
+		nA := make([]byte, w)
+		for x, b := range a {
+			nB := byte(0)
+			ln := calculateAliveNeighbours(h, w, world, x, y)
+			if b == 0 {
+				if ln == 3 {
+					nB = 255
+					sendFlippedEvent(x, y, completedTurns, c)
+				} else {
+					nB = 0
+				}
+			} else {
+				if ln < 2 || ln > 3 {
+					nB = 0
+					sendFlippedEvent(x, y, completedTurns, c)
+				} else {
+					nB = 255
+				}
+			}
+			nA[x] = nB
+		}
+		nworld[y] = nA
+	}
+	return nworld
+}
+
+func sendFlippedEvent(x int, y int, completedTurns int, c distributorChannels) {
+	cell := util.Cell{X: x, Y: y}
+	c.events <- CellFlipped{CompletedTurns: completedTurns, Cell: cell}
+}
+
+func calculateAliveCells(p Params, world [][]byte) []util.Cell {
+	alive := []util.Cell{}
+	for y, a := range world {
+		for x, b := range a {
+			if b == 255 {
+				coord := util.Cell{X: x, Y: y}
+				alive = append(alive, coord)
+			}
+		}
+	}
+	return alive
 }
 
 func calculateAliveNeighbours(h int, w int, world [][]byte, x int, y int) int {
@@ -82,48 +132,4 @@ func calculateAliveNeighbours(h int, w int, world [][]byte, x int, y int) int {
 		ans++
 	}
 	return ans
-}
-
-func calculateNextState(p Params, world [][]byte, c distributorChannels, x int) [][]byte {
-	h := p.ImageHeight
-	w := p.ImageWidth
-	nworld := make([][]byte, h, w)
-	for y, a := range world {
-		nA := make([]byte, w)
-		for x, b := range a {
-			nB := byte(0)
-			ln := calculateAliveNeighbours(h, w, world, x, y)
-			if b == 0 {
-				if ln == 3 {
-					nB = 255
-					cell := util.Cell{X: x, Y: y}
-					c.events <- CellFlipped{CompletedTurns: x, Cell: cell}
-				} else {
-					nB = 0
-				}
-			} else {
-				if ln < 2 || ln > 3 {
-					nB = 0
-				} else {
-					nB = 255
-				}
-			}
-			nA[x] = nB
-		}
-		nworld[y] = nA
-	}
-	return nworld
-}
-
-func calculateAliveCells(p golParams, world [][]byte) []cell {
-	alive := []cell{}
-	for y, a := range world {
-		for x, b := range a {
-			if b == 255 {
-				coord := cell{x, y}
-				alive = append(alive, coord)
-			}
-		}
-	}
-	return alive
 }
