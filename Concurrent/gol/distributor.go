@@ -3,9 +3,10 @@ package gol
 import "uk.ac.bris.cs/gameoflife/util"
 
 type distributorChannels struct {
-	events    chan<- Event
-	ioCommand chan<- ioCommand
-	ioIdle    <-chan bool
+	events     chan<- Event
+	ioCommand  chan<- ioCommand
+	ioIdle     <-chan bool
+	ioChannels ioChannels
 }
 
 // distributor divides the work between workers and interacts with other goroutines.
@@ -13,6 +14,18 @@ func distributor(p Params, c distributorChannels) {
 
 	// TODO: Create a 2D slice to store the world.
 	world := make([][]byte, p.ImageHeight, p.ImageWidth)
+
+	c.ioCommand <- ioInput
+	for i := 0; i < p.ImageWidth; i++ {
+		for j := 0; j < p.ImageHeight; j = j + 0 {
+			select {
+			case b := <-c.ioChannels.input:
+				world[i][j] = b
+				j++
+			}
+		}
+	}
+
 	// TODO: For all initially alive cells send a CellFlipped Event.
 	for i, elem := range world {
 		for j, cell := range elem {
