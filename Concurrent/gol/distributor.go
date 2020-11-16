@@ -3,10 +3,11 @@ package gol
 import "uk.ac.bris.cs/gameoflife/util"
 
 type distributorChannels struct {
-	events     chan<- Event
-	ioCommand  chan<- ioCommand
-	ioIdle     <-chan bool
-	ioChannels ioChannels
+	events    chan<- Event
+	ioCommand chan<- ioCommand
+	ioIdle    <-chan bool
+	input     <-chan byte
+	output    chan<- byte
 }
 
 // distributor divides the work between workers and interacts with other goroutines.
@@ -19,7 +20,7 @@ func distributor(p Params, c distributorChannels) {
 	for i := 0; i < p.ImageWidth; i++ {
 		for j := 0; j < p.ImageHeight; j = j + 0 {
 			select {
-			case b := <-c.ioChannels.input:
+			case b := <-c.input:
 				world[i][j] = b
 				j++
 			}
