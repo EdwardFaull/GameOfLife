@@ -1,6 +1,10 @@
 package gol
 
-import "uk.ac.bris.cs/gameoflife/util"
+import (
+	"fmt"
+
+	"uk.ac.bris.cs/gameoflife/util"
+)
 
 type distributorChannels struct {
 	events    chan<- Event
@@ -13,10 +17,26 @@ type distributorChannels struct {
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p Params, c distributorChannels) {
 
-	// TODO: Create a 2D slice to store the world.
+	//Create a 2D slice to store the world.
 	world := make([][]byte, p.ImageHeight, p.ImageWidth)
 
+	//TODO: This is implementation uses busy waiting and is bad. Fix.
+	c.ioCommand <- ioCheckIdle
+	fmt.Println("Sent idle check")
+	for {
+		idle := false
+		select {
+		case x := <-c.ioIdle:
+			idle = x
+		}
+		if idle {
+			break
+		}
+	}
+
 	c.ioCommand <- ioInput
+	fmt.Println("Sent input signal")
+	//TODO: Fix
 	for i := 0; i < p.ImageWidth; i++ {
 		for j := 0; j < p.ImageHeight; j = j + 0 {
 			select {
@@ -27,7 +47,7 @@ func distributor(p Params, c distributorChannels) {
 		}
 	}
 
-	// TODO: For all initially alive cells send a CellFlipped Event.
+	//For all initially alive cells send a CellFlipped Event.
 	for i, elem := range world {
 		for j, cell := range elem {
 			if cell == 255 {
@@ -40,7 +60,7 @@ func distributor(p Params, c distributorChannels) {
 
 	turn := 0
 
-	// TODO: Execute all turns of the Game of Life.
+	//Executes all turns of the Game of Life.
 	for x := 0; x < p.Turns; x++ {
 		world = calculateNextState(p, world, c, x)
 		c.events <- TurnComplete{CompletedTurns: x}

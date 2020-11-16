@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
 	"uk.ac.bris.cs/gameoflife/util"
 )
 
@@ -86,6 +87,7 @@ func (io *ioState) writePgmImage() {
 
 // readPgmImage opens a pgm file and sends its data as an array of bytes.
 func (io *ioState) readPgmImage() {
+	fmt.Println("Reading image...")
 	filename := <-io.channels.filename
 	data, ioError := ioutil.ReadFile("images/" + filename + ".pgm")
 	util.Check(ioError)
@@ -137,6 +139,7 @@ func startIo(p Params, c ioChannels) {
 				io.writePgmImage()
 			case ioCheckIdle:
 				io.channels.idle <- true
+				fmt.Println("Not idle anymore")
 			}
 		}
 	}
