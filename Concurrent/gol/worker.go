@@ -3,17 +3,47 @@ package gol
 import "uk.ac.bris.cs/gameoflife/util"
 
 type workerParams struct {
-	startX int
-	startY int
-	endX   int
-	endY   int
+	StartX      int
+	StartY      int
+	EndX        int
+	EndY        int
+	ImageWidth  int
+	ImageHeight int
+	Turns       int
 }
 
-func worker(world [][]byte, wp workerParams) {
+type workerChannels struct {
+	events chan<- Event
+}
+
+func worker(world [][]byte, p workerParams, c workerChannels) {
+
+	//For all initially alive cells send a CellFlipped Event.
+	for i, elem := range world {
+		for j, cell := range elem {
+			if cell == 255 {
+				d := util.Cell{X: i, Y: j}
+				cellFlip := CellFlipped{CompletedTurns: 0, Cell: d}
+				c.events <- cellFlip
+			}
+		}
+	}
+
+	turn := 0
+
+	//Executes all turns of the Game of Life.
+	for x := 0; x < p.Turns; x++ {
+		//TODO: Semaphores
+		world = calculateNextState(p, world, c, x)
+		c.events <- WorkerTurnComplete{CompletedTurns: x}
+		turn = x
+	}
+	aliveCells := calculateAliveCells(p, world)
+	c.events <- WorkerFinalTurnComplete{CompletedTurns: turn, Alive: aliveCells}
 
 }
 
-func calculateNextStateP(p Params, world [][]byte, c distributorChannels, completedTurns int) [][]byte {
+func calculateNextState(p workerParams, world [][]byte, c workerChannels, completedTurns int) [][]byte {
 	h := p.ImageHeight
 	w := p.ImageWidth
 	nworld := make([][]byte, h, w)
@@ -44,16 +74,16 @@ func calculateNextStateP(p Params, world [][]byte, c distributorChannels, comple
 	return nworld
 }
 
-func sendFlippedEventP(x int, y int, completedTurns int, c distributorChannels) {
+func sendFlippedEvent(x int, y int, completedTurns int, c workerChannels) {
 	cell := util.Cell{X: x, Y: y}
 	c.events <- CellFlipped{CompletedTurns: completedTurns, Cell: cell}
 }
 
-func calculateAliveCellsP(p Params, world [][]byte) []util.Cell {
+func calculateAliveCells(p workerParams, world [][]byte) []util.Cell {
 	alive := []util.Cell{}
-	for y, a := range world {
-		for x, b := range a {
-			if b == 255 {
+	for y := p.StartY; y < p.EndY; y++ {
+		for x := 0; x < p.ImageWidth; x++ {
+			if world[y][x] == 255 {
 				coord := util.Cell{X: x, Y: y}
 				alive = append(alive, coord)
 			}
@@ -62,7 +92,7 @@ func calculateAliveCellsP(p Params, world [][]byte) []util.Cell {
 	return alive
 }
 
-func calculateAliveNeighboursP(h int, w int, world [][]byte, x int, y int) int {
+func calculateAliveNeighbours(h int, w int, world [][]byte, x int, y int) int {
 	ans := 0
 	up := (x + 1) % h
 	down := (x - 1) % h

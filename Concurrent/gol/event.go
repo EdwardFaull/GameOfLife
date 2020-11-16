@@ -2,6 +2,7 @@ package gol
 
 import (
 	"fmt"
+
 	"uk.ac.bris.cs/gameoflife/util"
 )
 
@@ -59,10 +60,19 @@ type TurnComplete struct { // implements Event
 	CompletedTurns int
 }
 
+type WorkerTurnComplete struct {
+	CompletedTurns int
+}
+
 // FinalTurnComplete is an Event notifying the testing framework about the new world state after execution finished.
 // The data included with this Event is used directly by the tests.
 // SDL ignores this Event.
 type FinalTurnComplete struct {
+	CompletedTurns int
+	Alive          []util.Cell
+}
+
+type WorkerFinalTurnComplete struct {
 	CompletedTurns int
 	Alive          []util.Cell
 }
@@ -127,6 +137,22 @@ func (event FinalTurnComplete) String() string {
 }
 
 func (event FinalTurnComplete) GetCompletedTurns() int {
+	return event.CompletedTurns
+}
+
+func (event WorkerTurnComplete) String() string {
+	return fmt.Sprintf("")
+}
+
+func (event WorkerTurnComplete) GetCompletedTurns() int {
+	return event.CompletedTurns
+}
+
+func (event WorkerFinalTurnComplete) String() string {
+	return fmt.Sprintf("")
+}
+
+func (event WorkerFinalTurnComplete) GetCompletedTurns() int {
 	return event.CompletedTurns
 }
 
