@@ -1,6 +1,8 @@
 package gol
 
 import (
+	"fmt"
+
 	"uk.ac.bris.cs/gameoflife/util"
 )
 
@@ -10,22 +12,21 @@ type distributorChannels struct {
 	ioIdle    <-chan bool
 	input     <-chan uint8
 	output    chan<- uint8
-}
-
-type distributorIOChannels struct {
-	input    <-chan uint8
-	output   chan<- uint8
-	filename chan<- string
+	filename  chan<- string
 }
 
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p Params, c distributorChannels) {
 
 	//Create a 2D slice to store the world.
-	world := make([][]byte, p.ImageHeight, p.ImageWidth)
+	world := make([][]byte, p.ImageHeight)
+	for i := range world {
+		world[i] = make([]byte, p.ImageWidth)
+	}
 
 	//TODO: This is implementation uses busy waiting and is bad.
 	c.ioCommand <- ioCheckIdle
+	//fmt.Println("Sent idle check")
 	for {
 		idle := false
 		select {
@@ -38,13 +39,16 @@ func distributor(p Params, c distributorChannels) {
 	}
 
 	c.ioCommand <- ioInput
+
+	s := fmt.Sprintf("%dx%d", p.ImageWidth, p.ImageHeight)
+	c.filename <- s
+
 	//TODO: Fix
-	for i := 0; i < p.ImageWidth; i++ {
-		for j := 0; j < p.ImageHeight; j = j + 0 {
+	for i := 0; i < p.ImageHeight; i++ {
+		for j := 0; j < p.ImageWidth; j++ {
 			select {
 			case b := <-c.input:
 				world[i][j] = b
-				j++
 			}
 		}
 	}
@@ -61,13 +65,14 @@ func distributor(p Params, c distributorChannels) {
 	}
 
 	turn := 0
-
 	//Executes all turns of the Game of Life.
 	for x := 0; x < p.Turns; x++ {
 		world = calculateNextState(p, world, c, x)
 		c.events <- TurnComplete{CompletedTurns: x}
+		turn = x
 	}
-	//TODO: c.events <- FinalTurnComplete{CompletedTurns: x}
+	aliveCells := calculateAliveCells(p, world)
+	c.events <- FinalTurnComplete{CompletedTurns: turn, Alive: aliveCells}
 
 	// TODO: Send correct Events when required, e.g. CellFlipped, TurnComplete and FinalTurnComplete.
 	//		 See event.go for a list of all events.

@@ -6,7 +6,6 @@ type Params struct {
 	Threads     int
 	ImageWidth  int
 	ImageHeight int
-	Filename    string
 }
 
 // Run starts the processing of Game of Life. It should initialise channels and goroutines.
@@ -16,6 +15,7 @@ func Run(p Params, events chan<- Event, keyPresses <-chan rune) {
 	ioIdle := make(chan bool)
 	input := make(chan byte)
 	output := make(chan byte)
+	filename := make(chan string)
 
 	distributorChannels := distributorChannels{
 		events,
@@ -23,13 +23,14 @@ func Run(p Params, events chan<- Event, keyPresses <-chan rune) {
 		ioIdle,
 		input,
 		output,
+		filename,
 	}
 	go distributor(p, distributorChannels)
 
 	ioChannels := ioChannels{
 		command:  ioCommand,
 		idle:     ioIdle,
-		filename: nil,
+		filename: filename,
 		output:   output,
 		input:    input,
 	}
