@@ -8,8 +8,14 @@ type distributorChannels struct {
 	events    chan<- Event
 	ioCommand chan<- ioCommand
 	ioIdle    <-chan bool
-	input     <-chan byte
-	output    chan<- byte
+	input     <-chan uint8
+	output    chan<- uint8
+}
+
+type distributorIOChannels struct {
+	input    <-chan uint8
+	output   chan<- uint8
+	filename chan<- string
 }
 
 // distributor divides the work between workers and interacts with other goroutines.
@@ -18,7 +24,7 @@ func distributor(p Params, c distributorChannels) {
 	//Create a 2D slice to store the world.
 	world := make([][]byte, p.ImageHeight, p.ImageWidth)
 
-	//TODO: This is implementation uses busy waiting and is bad. Fix.
+	//TODO: This is implementation uses busy waiting and is bad.
 	c.ioCommand <- ioCheckIdle
 	for {
 		idle := false
