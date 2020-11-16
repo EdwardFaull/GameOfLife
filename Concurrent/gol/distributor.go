@@ -1,8 +1,6 @@
 package gol
 
 import (
-	"fmt"
-
 	"uk.ac.bris.cs/gameoflife/util"
 )
 
@@ -22,7 +20,6 @@ func distributor(p Params, c distributorChannels) {
 
 	//TODO: This is implementation uses busy waiting and is bad. Fix.
 	c.ioCommand <- ioCheckIdle
-	fmt.Println("Sent idle check")
 	for {
 		idle := false
 		select {
@@ -35,7 +32,6 @@ func distributor(p Params, c distributorChannels) {
 	}
 
 	c.ioCommand <- ioInput
-	fmt.Println("Sent input signal")
 	//TODO: Fix
 	for i := 0; i < p.ImageWidth; i++ {
 		for j := 0; j < p.ImageHeight; j = j + 0 {
