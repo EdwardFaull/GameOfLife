@@ -55,10 +55,12 @@ func distributor(p Params, c distributorChannels) {
 
 	//TODO: Initialise semaphores for locking finished workers
 	turn := 0
-	workersCompletedTurn := 0
-	workersFinished := 0
 	threadHeight := p.ImageHeight / p.Threads
 	workerEvents := make(chan Event)
+	//Holds the channels that distributor sends boundary arrays needed by each worker
+	fillers := make([]chan<- filler, p.Threads, p.Threads)
+	//Receives boundary arrays from each worker on each turn for distribution
+	globalFiller := make(chan filler, p.Threads)
 
 	//TODO: Split image, send worker goroutines
 	for t := 0; t < p.Threads; t++ {
@@ -66,24 +68,58 @@ func distributor(p Params, c distributorChannels) {
 		if t == p.Threads-1 {
 			endY = p.ImageHeight
 		}
+		startY := t * threadHeight
+
+		fillerElement := make(chan filler, p.Threads)
+		fillers[t] = fillerElement
+
 		workerParams := workerParams{
-			StartX:      0,
-			StartY:      t * threadHeight,
-			EndX:        p.ImageWidth,
+			StartY:      startY,
 			EndY:        endY,
 			ImageWidth:  p.ImageWidth,
-			ImageHeight: p.ImageHeight,
+			ImageHeight: endY - startY,
 			Turns:       p.Turns,
 		}
 		workerChannels := workerChannels{
-			events: workerEvents,
+			events:       workerEvents,
+			globalFiller: globalFiller,
+			workerFiller: fillerElement,
 		}
 		//fmt.Println("Sent worker", t, "from", workerParams.StartY, "to", workerParams.EndY)
-		go worker(world, workerParams, workerChannels)
+		fmt.Println("Made worker", t, "with bounds", startY, "to", endY)
+		go worker(world[startY:endY], workerParams, workerChannels, t)
 	}
 
+	turn = handleChannels(p, c, workerEvents, globalFiller, fillers)
+
+	// Make sure that the Io has finished any output before exiting.
+	c.ioCommand <- ioCheckIdle
+	<-c.ioIdle
+
+	c.events <- StateChange{turn, Quitting}
+	// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
+	close(c.events)
+}
+
+func sendLinesToWorker(p Params, f filler, channels []chan<- filler) {
+	worker := f.workerID
+	upperWorker := (worker + 1) % p.Threads
+	lowerWorker := (worker - 1)
+	if lowerWorker < 0 {
+		lowerWorker = lowerWorker + p.Threads
+	}
+	channels[upperWorker] <- filler{lowerLine: nil, upperLine: f.upperLine, workerID: worker}
+	channels[lowerWorker] <- filler{lowerLine: f.lowerLine, upperLine: nil, workerID: worker}
+}
+
+func handleChannels(p Params, c distributorChannels, workerEvents <-chan Event,
+	globalFiller <-chan filler, fillers []chan<- filler) int {
 	isDone := false
 	aliveCells := []util.Cell{}
+
+	turn := 0
+	workersCompletedTurn := 0
+	workersFinished := 0
 
 	for {
 		select {
@@ -106,17 +142,11 @@ func distributor(p Params, c distributorChannels) {
 					isDone = true
 				}
 			}
+		case f := <-globalFiller:
+			sendLinesToWorker(p, f, fillers)
 		}
 		if isDone {
-			break
+			return turn
 		}
 	}
-
-	// Make sure that the Io has finished any output before exiting.
-	c.ioCommand <- ioCheckIdle
-	<-c.ioIdle
-
-	c.events <- StateChange{turn, Quitting}
-	// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
-	close(c.events)
 }
