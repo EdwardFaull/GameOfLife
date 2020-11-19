@@ -55,8 +55,9 @@ func distributor(p Params, c distributorChannels) {
 
 	//TODO: Initialise semaphores for locking finished workers
 	turn := 0
-	threadHeight := p.ImageHeight / p.Threads
+	threadHeight := float32(p.ImageHeight) / float32(p.Threads)
 	workerEvents := make(chan Event)
+	distributorEvents := make(chan Event, p.Threads)
 	//Holds the channels that distributor sends boundary arrays needed by each worker
 	fillers := make([]chan<- filler, p.Threads, p.Threads)
 	//Receives boundary arrays from each worker on each turn for distribution
@@ -64,11 +65,11 @@ func distributor(p Params, c distributorChannels) {
 
 	//TODO: Split image, send worker goroutines
 	for t := 0; t < p.Threads; t++ {
-		endY := (t + 1) * threadHeight
+		endY := int(float32(t+1) * threadHeight)
 		if t == p.Threads-1 {
 			endY = p.ImageHeight
 		}
-		startY := t * threadHeight
+		startY := int(float32(t) * threadHeight)
 
 		fillerElement := make(chan filler, p.Threads)
 		fillers[t] = fillerElement
@@ -84,13 +85,14 @@ func distributor(p Params, c distributorChannels) {
 			events:       workerEvents,
 			globalFiller: globalFiller,
 			workerFiller: fillerElement,
+			turn:         &turn,
 		}
-		//fmt.Println("Sent worker", t, "from", workerParams.StartY, "to", workerParams.EndY)
+		fmt.Println("Sent worker", t, "from", workerParams.StartY, "to", workerParams.EndY)
 		fmt.Println("Made worker", t, "with bounds", startY, "to", endY)
 		go worker(world[startY:endY], workerParams, workerChannels, t)
 	}
 
-	turn = handleChannels(p, c, workerEvents, globalFiller, fillers)
+	handleChannels(p, c, workerEvents, distributorEvents, globalFiller, fillers, &turn)
 
 	// Make sure that the Io has finished any output before exiting.
 	c.ioCommand <- ioCheckIdle
@@ -112,12 +114,11 @@ func sendLinesToWorker(p Params, f filler, channels []chan<- filler) {
 	channels[lowerWorker] <- filler{lowerLine: f.lowerLine, upperLine: nil, workerID: worker}
 }
 
-func handleChannels(p Params, c distributorChannels, workerEvents <-chan Event,
-	globalFiller <-chan filler, fillers []chan<- filler) int {
+func handleChannels(p Params, c distributorChannels, workerEvents <-chan Event, distrubutorEvents chan<- Event,
+	globalFiller <-chan filler, fillers []chan<- filler, turn *int) int {
 	isDone := false
 	aliveCells := []util.Cell{}
 
-	turn := 0
 	workersCompletedTurn := 0
 	workersFinished := 0
 
@@ -129,8 +130,12 @@ func handleChannels(p Params, c distributorChannels, workerEvents <-chan Event,
 				workersCompletedTurn++
 				if workersCompletedTurn == p.Threads {
 					workersCompletedTurn = 0
-					c.events <- TurnComplete{CompletedTurns: turn}
-					turn++
+					c.events <- TurnComplete{CompletedTurns: *turn}
+					/*for i := 0; i < p.Threads; i++ {
+						distrubutorEvents <- TurnComplete{CompletedTurns: *turn}
+					}*/
+					(*turn)++
+					fmt.Println("======TURN COMPLETE========")
 					//TODO: Send all-clear to workers using semaphores
 				}
 			case WorkerFinalTurnComplete:
@@ -138,7 +143,7 @@ func handleChannels(p Params, c distributorChannels, workerEvents <-chan Event,
 				aliveCells = append(aliveCells, e.Alive...)
 				if workersFinished == p.Threads {
 					//TODO: Retrieve alive cells from workers
-					c.events <- FinalTurnComplete{CompletedTurns: turn, Alive: aliveCells}
+					c.events <- FinalTurnComplete{CompletedTurns: *turn, Alive: aliveCells}
 					isDone = true
 				}
 			}
@@ -146,7 +151,7 @@ func handleChannels(p Params, c distributorChannels, workerEvents <-chan Event,
 			sendLinesToWorker(p, f, fillers)
 		}
 		if isDone {
-			return turn
+			return *turn
 		}
 	}
 }

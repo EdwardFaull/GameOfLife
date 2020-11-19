@@ -1,6 +1,8 @@
 package gol
 
 import (
+	"fmt"
+
 	"uk.ac.bris.cs/gameoflife/util"
 )
 
@@ -13,9 +15,11 @@ type workerParams struct {
 }
 
 type workerChannels struct {
-	events       chan<- Event
-	globalFiller chan<- filler
-	workerFiller <-chan filler
+	events            chan<- Event
+	distributorEvents <-chan Event
+	globalFiller      chan<- filler
+	workerFiller      <-chan filler
+	turn              *int
 }
 
 //Used to send the top and bottom arrays of each worker's world to the distributor,
@@ -51,7 +55,7 @@ func worker(world [][]byte, p workerParams, c workerChannels, workerID int) {
 		//Receive lines outside world's boundaries for use in this worker
 		receivedFiller := <-c.workerFiller
 		receivedFiller2 := <-c.workerFiller
-		//fmt.Println(workerID, "Recieved fillers from workers", receivedFiller.workerID, receivedFiller2.workerID)
+		fmt.Println(workerID, "Recieved fillers from workers", receivedFiller.workerID, receivedFiller2.workerID)
 		//Decide which filler delivered which line
 		upperLine := []byte{}
 		lowerLine := []byte{}
@@ -62,17 +66,38 @@ func worker(world [][]byte, p workerParams, c workerChannels, workerID int) {
 			upperLine = receivedFiller2.upperLine
 			lowerLine = receivedFiller.lowerLine
 		}
+		fmt.Println("Worker", workerID, "upper line = ", upperLine, ", lower line =", lowerLine)
 		//Execute turn of game
-		world = calculateNextState(p, world, c, x, upperLine, lowerLine)
+		world = calculateNextState(workerID, p, world, c, x, upperLine, lowerLine)
 		//Send completion event to distributor
 		c.events <- WorkerTurnComplete{CompletedTurns: x}
 		turn = x
+		fmt.Println("Worker", workerID, "has completed turn", turn)
 	}
-	aliveCells := calculateAliveCells(p, world)
+	aliveCells := calculateAliveCells(p, world, workerID)
 	c.events <- WorkerFinalTurnComplete{CompletedTurns: turn, Alive: aliveCells}
 }
 
-func calculateNextState(p workerParams, world [][]byte, c workerChannels, completedTurns int, upperLine []byte, lowerLine []byte) [][]byte {
+func createNewWorld(world [][]byte, p workerParams) [][]byte {
+	newWorld := make([][]byte, p.ImageHeight)
+	for i := range newWorld {
+		newWorld[i] = make([]byte, p.ImageWidth)
+		for j := range newWorld[i] {
+			newWorld[i][j] = world[i][j]
+		}
+	}
+	return newWorld
+}
+
+func duplicateArray(array []byte, p workerParams) []byte {
+	newArray := make([]byte, p.ImageWidth)
+	for i := range newArray {
+		newArray[i] = array[i]
+	}
+	return newArray
+}
+
+func calculateNextState(id int, p workerParams, world [][]byte, c workerChannels, completedTurns int, upperLine []byte, lowerLine []byte) [][]byte {
 	h := p.ImageHeight
 	w := p.ImageWidth
 	nworld := make([][]byte, h, w)
@@ -80,7 +105,7 @@ func calculateNextState(p workerParams, world [][]byte, c workerChannels, comple
 		nA := make([]byte, w)
 		for x, b := range a {
 			nB := byte(0)
-			ln := calculateAliveNeighbours(h, w, world, x, y, upperLine, lowerLine)
+			ln := calculateAliveNeighbours(id, h, w, world, x, y, upperLine, lowerLine)
 			if b == 0 {
 				if ln == 3 {
 					nB = 255
@@ -108,12 +133,12 @@ func sendFlippedEvent(x int, y int, completedTurns int, c workerChannels) {
 	c.events <- CellFlipped{CompletedTurns: completedTurns, Cell: cell}
 }
 
-func calculateAliveCells(p workerParams, world [][]byte) []util.Cell {
+func calculateAliveCells(p workerParams, world [][]byte, workerID int) []util.Cell {
 	alive := []util.Cell{}
 	for y := 0; y < p.ImageHeight; y++ {
 		for x := 0; x < p.ImageWidth; x++ {
 			if world[y][x] == 255 {
-				coord := util.Cell{X: x, Y: y}
+				coord := util.Cell{X: x, Y: y + p.StartY}
 				alive = append(alive, coord)
 			}
 		}
@@ -121,7 +146,7 @@ func calculateAliveCells(p workerParams, world [][]byte) []util.Cell {
 	return alive
 }
 
-func calculateAliveNeighbours(h int, w int, world [][]byte, x int, y int, upperLine []byte, lowerLine []byte) int {
+func calculateAliveNeighbours(id int, h int, w int, world [][]byte, x int, y int, upperLine []byte, lowerLine []byte) int {
 	ans := 0
 	up := y + 1
 	down := y - 1
