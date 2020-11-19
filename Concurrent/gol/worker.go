@@ -1,8 +1,6 @@
 package gol
 
 import (
-	"fmt"
-
 	"uk.ac.bris.cs/gameoflife/util"
 )
 
@@ -19,7 +17,7 @@ type workerChannels struct {
 	distributorEvents <-chan Event
 	globalFiller      chan<- filler
 	workerFiller      <-chan filler
-	turn              *int
+	finishedChannel   <-chan bool
 }
 
 //Used to send the top and bottom arrays of each worker's world to the distributor,
@@ -55,7 +53,6 @@ func worker(world [][]byte, p workerParams, c workerChannels, workerID int) {
 		//Receive lines outside world's boundaries for use in this worker
 		receivedFiller := <-c.workerFiller
 		receivedFiller2 := <-c.workerFiller
-		fmt.Println(workerID, "Recieved fillers from workers", receivedFiller.workerID, receivedFiller2.workerID)
 		//Decide which filler delivered which line
 		upperLine := []byte{}
 		lowerLine := []byte{}
@@ -66,13 +63,21 @@ func worker(world [][]byte, p workerParams, c workerChannels, workerID int) {
 			upperLine = receivedFiller2.upperLine
 			lowerLine = receivedFiller.lowerLine
 		}
-		fmt.Println("Worker", workerID, "upper line = ", upperLine, ", lower line =", lowerLine)
 		//Execute turn of game
 		world = calculateNextState(workerID, p, world, c, x, upperLine, lowerLine)
 		//Send completion event to distributor
 		c.events <- WorkerTurnComplete{CompletedTurns: x}
 		turn = x
-		fmt.Println("Worker", workerID, "has completed turn", turn)
+		canContinue := false
+		for {
+			select {
+			case b := <-c.finishedChannel:
+				canContinue = b
+			}
+			if canContinue {
+				break
+			}
+		}
 	}
 	aliveCells := calculateAliveCells(p, world, workerID)
 	c.events <- WorkerFinalTurnComplete{CompletedTurns: turn, Alive: aliveCells}
