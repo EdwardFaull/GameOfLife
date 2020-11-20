@@ -64,10 +64,10 @@ func worker(world [][]byte, p workerParams, c workerChannels, workerID int) {
 			lowerLine = receivedFiller.lowerLine
 		}
 		//Execute turn of game
-		world = calculateNextState(workerID, p, world, c, x, upperLine, lowerLine)
+		aliveCells := 0
+		world, aliveCells = calculateNextState(workerID, p, world, c, x, upperLine, lowerLine)
 		//Send completion event to distributor
-		aliveCells := calculateAliveCells(p, world, workerID)
-		c.events <- WorkerTurnComplete{CompletedTurns: x, CellsCount: len(aliveCells)}
+		c.events <- WorkerTurnComplete{CompletedTurns: x, CellsCount: aliveCells}
 		turn = x
 		canContinue := false
 		for {
@@ -103,7 +103,9 @@ func duplicateArray(array []byte, p workerParams) []byte {
 	return newArray
 }
 
-func calculateNextState(id int, p workerParams, world [][]byte, c workerChannels, completedTurns int, upperLine []byte, lowerLine []byte) [][]byte {
+func calculateNextState(id int, p workerParams, world [][]byte, c workerChannels,
+	completedTurns int, upperLine []byte, lowerLine []byte) ([][]byte, int) {
+	aliveCells := 0
 	h := p.ImageHeight
 	w := p.ImageWidth
 	nworld := make([][]byte, h, w)
@@ -115,6 +117,7 @@ func calculateNextState(id int, p workerParams, world [][]byte, c workerChannels
 			if b == 0 {
 				if ln == 3 {
 					nB = 255
+					aliveCells++
 					sendFlippedEvent(x, y, completedTurns, c)
 				} else {
 					nB = 0
@@ -124,6 +127,7 @@ func calculateNextState(id int, p workerParams, world [][]byte, c workerChannels
 					nB = 0
 					sendFlippedEvent(x, y, completedTurns, c)
 				} else {
+					aliveCells++
 					nB = 255
 				}
 			}
@@ -131,7 +135,7 @@ func calculateNextState(id int, p workerParams, world [][]byte, c workerChannels
 		}
 		nworld[y] = nA
 	}
-	return nworld
+	return nworld, aliveCells
 }
 
 func sendFlippedEvent(x int, y int, completedTurns int, c workerChannels) {
