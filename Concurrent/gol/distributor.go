@@ -2,6 +2,7 @@ package gol
 
 import (
 	"fmt"
+	"time"
 
 	"uk.ac.bris.cs/gameoflife/util"
 )
@@ -95,7 +96,6 @@ func distributor(p Params, c distributorChannels) {
 	}
 
 	turn = handleChannels(p, c, workerEvents, globalFiller, fillers, turnFinishedChannels)
-
 	// Make sure that the Io has finished any output before exiting.
 	c.ioCommand <- ioCheckIdle
 	<-c.ioIdle
@@ -125,14 +125,22 @@ func handleChannels(p Params, c distributorChannels, workerEvents <-chan Event,
 	workersFinished := 0
 	turn := 0
 
+	ticker := time.NewTicker(2 * time.Second)
+
+	prevTurnAliveCellCount := 0
+	workingAliveCellCount := 0
+
 	for {
 		select {
 		case event := <-workerEvents:
 			switch e := event.(type) {
 			case WorkerTurnComplete:
 				workersCompletedTurn++
+				workingAliveCellCount += e.CellsCount
 				if workersCompletedTurn == p.Threads {
 					workersCompletedTurn = 0
+					prevTurnAliveCellCount = workingAliveCellCount
+					workingAliveCellCount = 0
 					c.events <- TurnComplete{CompletedTurns: turn}
 					(turn)++
 					for i := 0; i < p.Threads; i++ {
@@ -149,13 +157,41 @@ func handleChannels(p Params, c distributorChannels, workerEvents <-chan Event,
 					//TODO: Retrieve alive cells from workers
 					c.events <- FinalTurnComplete{CompletedTurns: turn, Alive: aliveCells}
 					isDone = true
+					outputImage(p, c, aliveCells)
 				}
 			}
 		case f := <-globalFiller:
 			sendLinesToWorker(p, f, fillers)
+		case <-ticker.C:
+			c.events <- AliveCellsCount{CompletedTurns: turn, CellsCount: prevTurnAliveCellCount}
 		}
 		if isDone {
+			ticker.Stop()
 			return turn
+		}
+	}
+}
+
+func outputImage(p Params, c distributorChannels, aliveCells []util.Cell) {
+	c.ioCommand <- ioOutput
+	s := fmt.Sprintf("%dx%dx%d", p.ImageWidth, p.ImageHeight, p.Turns)
+	c.filename <- s
+
+	world := make([][]byte, p.ImageHeight)
+	for i := range world {
+		world[i] = make([]byte, p.ImageWidth)
+		for j := range world[i] {
+			world[i][j] = 0
+		}
+	}
+
+	for _, cell := range aliveCells {
+		world[cell.Y][cell.X] = 255
+	}
+
+	for i := 0; i < p.ImageHeight; i++ {
+		for j := 0; j < p.ImageWidth; j++ {
+			c.output <- world[i][j]
 		}
 	}
 }

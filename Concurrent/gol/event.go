@@ -62,6 +62,7 @@ type TurnComplete struct { // implements Event
 
 type WorkerTurnComplete struct {
 	CompletedTurns int
+	CellsCount     int
 }
 
 // FinalTurnComplete is an Event notifying the testing framework about the new world state after execution finished.

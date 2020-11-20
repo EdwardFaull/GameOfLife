@@ -66,7 +66,8 @@ func worker(world [][]byte, p workerParams, c workerChannels, workerID int) {
 		//Execute turn of game
 		world = calculateNextState(workerID, p, world, c, x, upperLine, lowerLine)
 		//Send completion event to distributor
-		c.events <- WorkerTurnComplete{CompletedTurns: x}
+		aliveCells := calculateAliveCells(p, world, workerID)
+		c.events <- WorkerTurnComplete{CompletedTurns: x, CellsCount: len(aliveCells)}
 		turn = x
 		canContinue := false
 		for {
