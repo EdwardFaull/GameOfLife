@@ -1,6 +1,8 @@
 package gol
 
 import (
+	"fmt"
+
 	"uk.ac.bris.cs/gameoflife/util"
 )
 
@@ -18,6 +20,7 @@ type workerChannels struct {
 	globalFiller      chan<- filler
 	workerFiller      <-chan filler
 	finishedChannel   <-chan bool
+	keyPresses        <-chan rune
 }
 
 //Used to send the top and bottom arrays of each worker's world to the distributor,
@@ -30,11 +33,13 @@ type filler struct {
 
 func worker(world [][]byte, p workerParams, c workerChannels, workerID int) {
 
+	isPaused := false
+
 	//For all initially alive cells send a CellFlipped Event.
-	for i, elem := range world {
-		for j, cell := range elem {
+	for y, elem := range world {
+		for x, cell := range elem {
 			if cell == 255 {
-				d := util.Cell{X: i, Y: j}
+				d := util.Cell{X: x, Y: y + p.StartY}
 				cellFlip := CellFlipped{CompletedTurns: 0, Cell: d}
 				c.events <- cellFlip
 			}
@@ -42,45 +47,68 @@ func worker(world [][]byte, p workerParams, c workerChannels, workerID int) {
 	}
 
 	turn := 0
+	aliveCells := []util.Cell{}
 
 	//Executes all turns of the Game of Life.
-	for x := 0; x < p.Turns; x++ {
+	for {
 		//TODO: Semaphores
-
 		//Send top and bottom arrays to distributor
-		c.globalFiller <- filler{lowerLine: world[0], upperLine: world[p.ImageHeight-1], workerID: workerID}
+		if !isPaused {
+			aliveCells = []util.Cell{}
+			c.globalFiller <- filler{lowerLine: world[0], upperLine: world[p.ImageHeight-1], workerID: workerID}
 
-		//Receive lines outside world's boundaries for use in this worker
-		receivedFiller := <-c.workerFiller
-		receivedFiller2 := <-c.workerFiller
-		//Decide which filler delivered which line
-		upperLine := []byte{}
-		lowerLine := []byte{}
-		if receivedFiller.upperLine != nil {
-			upperLine = receivedFiller.upperLine
-			lowerLine = receivedFiller2.lowerLine
-		} else {
-			upperLine = receivedFiller2.upperLine
-			lowerLine = receivedFiller.lowerLine
-		}
-		//Execute turn of game
-		aliveCells := 0
-		world, aliveCells = calculateNextState(workerID, p, world, c, x, upperLine, lowerLine)
-		//Send completion event to distributor
-		c.events <- WorkerTurnComplete{CompletedTurns: x, CellsCount: aliveCells}
-		turn = x
-		canContinue := false
-		for {
-			select {
-			case b := <-c.finishedChannel:
-				canContinue = b
+			//Receive lines outside world's boundaries for use in this worker
+			receivedFiller := <-c.workerFiller
+			receivedFiller2 := <-c.workerFiller
+			//Decide which filler delivered which line
+			upperLine := []byte{}
+			lowerLine := []byte{}
+			if receivedFiller.upperLine != nil {
+				upperLine = receivedFiller.upperLine
+				lowerLine = receivedFiller2.lowerLine
+			} else {
+				upperLine = receivedFiller2.upperLine
+				lowerLine = receivedFiller.lowerLine
 			}
-			if canContinue {
+			//Execute turn of game
+			world, aliveCells = calculateNextState(workerID, p, world, c, turn, upperLine, lowerLine)
+			//Send completion event to distributor
+			c.events <- WorkerTurnComplete{CompletedTurns: turn, CellsCount: len(aliveCells)}
+			canContinue := false
+			for {
+				select {
+				case b := <-c.finishedChannel:
+					canContinue = b
+				}
+				if canContinue {
+					break
+				}
+			}
+			turn++
+			if turn == p.Turns {
 				break
 			}
 		}
+
+		select {
+		case k := <-c.keyPresses:
+			switch k {
+			case 'p':
+				fmt.Println("Received pause command from worker")
+				isPaused = !isPaused
+			case 's':
+				//fmt.Println("Saving, alive cells:", aliveCells)
+				c.events <- WorkerSaveImage{CompletedTurns: turn, Alive: aliveCells}
+				//TODO: send event
+			case 'q':
+				c.events <- WorkerSaveImage{CompletedTurns: turn, Alive: aliveCells}
+				//TODO: send event
+				return
+			}
+		default:
+		}
 	}
-	aliveCells := calculateAliveCells(p, world, workerID)
+	//aliveCells := calculateAliveCells(p, world, workerID)
 	c.events <- WorkerFinalTurnComplete{CompletedTurns: turn, Alive: aliveCells}
 }
 
@@ -104,8 +132,8 @@ func duplicateArray(array []byte, p workerParams) []byte {
 }
 
 func calculateNextState(id int, p workerParams, world [][]byte, c workerChannels,
-	completedTurns int, upperLine []byte, lowerLine []byte) ([][]byte, int) {
-	aliveCells := 0
+	completedTurns int, upperLine []byte, lowerLine []byte) ([][]byte, []util.Cell) {
+	aliveCells := []util.Cell{}
 	h := p.ImageHeight
 	w := p.ImageWidth
 	nworld := make([][]byte, h, w)
@@ -117,17 +145,17 @@ func calculateNextState(id int, p workerParams, world [][]byte, c workerChannels
 			if b == 0 {
 				if ln == 3 {
 					nB = 255
-					aliveCells++
-					sendFlippedEvent(x, y, completedTurns, c)
+					aliveCells = append(aliveCells, util.Cell{X: x, Y: y + p.StartY})
+					sendFlippedEvent(x, y+p.StartY, completedTurns, c)
 				} else {
 					nB = 0
 				}
 			} else {
 				if ln < 2 || ln > 3 {
 					nB = 0
-					sendFlippedEvent(x, y, completedTurns, c)
+					sendFlippedEvent(x, y+p.StartY, completedTurns, c)
 				} else {
-					aliveCells++
+					aliveCells = append(aliveCells, util.Cell{X: x, Y: y + p.StartY})
 					nB = 255
 				}
 			}

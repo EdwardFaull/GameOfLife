@@ -78,6 +78,11 @@ type WorkerFinalTurnComplete struct {
 	Alive          []util.Cell
 }
 
+type WorkerSaveImage struct {
+	CompletedTurns int
+	Alive          []util.Cell
+}
+
 // String methods allow the different types of Events and States to be printed.
 
 func (state State) String() string {
@@ -154,6 +159,14 @@ func (event WorkerFinalTurnComplete) String() string {
 }
 
 func (event WorkerFinalTurnComplete) GetCompletedTurns() int {
+	return event.CompletedTurns
+}
+
+func (event WorkerSaveImage) String() string {
+	return fmt.Sprintf("")
+}
+
+func (event WorkerSaveImage) GetCompletedTurns() int {
 	return event.CompletedTurns
 }
 

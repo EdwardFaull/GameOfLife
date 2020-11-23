@@ -24,6 +24,12 @@ func Run(p Params, events chan<- Event, keyPresses <-chan rune) {
 		input,
 		output,
 		filename,
+		keyPresses,
+		make(chan Event),
+		make([]chan rune, p.Threads),
+		make([]chan filler, p.Threads),
+		make(chan filler),
+		make([]chan bool, p.Threads),
 	}
 	go distributor(p, distributorChannels)
 

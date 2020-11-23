@@ -8,12 +8,18 @@ import (
 )
 
 type distributorChannels struct {
-	events    chan<- Event
-	ioCommand chan<- ioCommand
-	ioIdle    <-chan bool
-	input     <-chan uint8
-	output    chan<- uint8
-	filename  chan<- string
+	events               chan<- Event
+	ioCommand            chan<- ioCommand
+	ioIdle               <-chan bool
+	input                <-chan uint8
+	output               chan<- uint8
+	filename             chan<- string
+	keyPresses           <-chan rune
+	workerEvents         chan Event
+	workerKeyPresses     []chan rune
+	fillers              []chan filler
+	globalFiller         chan filler
+	turnFinishedChannels []chan bool
 }
 
 // distributor divides the work between workers and interacts with other goroutines.
@@ -57,13 +63,6 @@ func distributor(p Params, c distributorChannels) {
 	//TODO: Initialise semaphores for locking finished workers
 	turn := 0
 	threadHeight := float32(p.ImageHeight) / float32(p.Threads)
-	workerEvents := make(chan Event)
-	//Holds the channels that distributor sends boundary arrays needed by each worker
-	fillers := make([]chan<- filler, p.Threads, p.Threads)
-	//Receives boundary arrays from each worker on each turn for distribution
-	globalFiller := make(chan filler, p.Threads)
-	//
-	turnFinishedChannels := make([]chan bool, p.Threads)
 
 	//TODO: Split image, send worker goroutines
 	for t := 0; t < p.Threads; t++ {
@@ -74,10 +73,13 @@ func distributor(p Params, c distributorChannels) {
 		startY := int(float32(t) * threadHeight)
 
 		fillerElement := make(chan filler, p.Threads)
-		fillers[t] = fillerElement
+		c.fillers[t] = fillerElement
 
 		finishedChannel := make(chan bool)
-		turnFinishedChannels[t] = finishedChannel
+		c.turnFinishedChannels[t] = finishedChannel
+
+		keyPress := make(chan rune, 10)
+		c.workerKeyPresses[t] = keyPress
 
 		workerParams := workerParams{
 			StartY:      startY,
@@ -87,15 +89,16 @@ func distributor(p Params, c distributorChannels) {
 			Turns:       p.Turns,
 		}
 		workerChannels := workerChannels{
-			events:          workerEvents,
-			globalFiller:    globalFiller,
+			events:          c.workerEvents,
+			globalFiller:    c.globalFiller,
 			workerFiller:    fillerElement,
 			finishedChannel: finishedChannel,
+			keyPresses:      keyPress,
 		}
 		go worker(world[startY:endY], workerParams, workerChannels, t)
 	}
 
-	turn = handleChannels(p, c, workerEvents, globalFiller, fillers, turnFinishedChannels)
+	turn = handleChannels(p, c)
 	// Make sure that the Io has finished any output before exiting.
 	c.ioCommand <- ioCheckIdle
 	<-c.ioIdle
@@ -105,25 +108,28 @@ func distributor(p Params, c distributorChannels) {
 	close(c.events)
 }
 
-func sendLinesToWorker(p Params, f filler, channels []chan<- filler) {
+func sendLinesToWorker(p Params, f filler, c distributorChannels) {
 	worker := f.workerID
 	upperWorker := (worker + 1) % p.Threads
 	lowerWorker := (worker - 1)
 	if lowerWorker < 0 {
 		lowerWorker = lowerWorker + p.Threads
 	}
-	channels[upperWorker] <- filler{lowerLine: nil, upperLine: f.upperLine, workerID: worker}
-	channels[lowerWorker] <- filler{lowerLine: f.lowerLine, upperLine: nil, workerID: worker}
+	c.fillers[upperWorker] <- filler{lowerLine: nil, upperLine: f.upperLine, workerID: worker}
+	c.fillers[lowerWorker] <- filler{lowerLine: f.lowerLine, upperLine: nil, workerID: worker}
 }
 
-func handleChannels(p Params, c distributorChannels, workerEvents <-chan Event,
-	globalFiller <-chan filler, fillers []chan<- filler, finishedChannels []chan bool) int {
+func handleChannels(p Params, c distributorChannels) int {
 	isDone := false
 	aliveCells := []util.Cell{}
+	savingAliveCells := []util.Cell{}
 
 	workersCompletedTurn := 0
 	workersFinished := 0
 	turn := 0
+	isPaused := false
+	isSaving := false
+	imageStripsSaved := 0
 
 	ticker := time.NewTicker(2 * time.Second)
 
@@ -132,7 +138,7 @@ func handleChannels(p Params, c distributorChannels, workerEvents <-chan Event,
 
 	for {
 		select {
-		case event := <-workerEvents:
+		case event := <-c.workerEvents:
 			switch e := event.(type) {
 			case WorkerTurnComplete:
 				workersCompletedTurn++
@@ -143,12 +149,11 @@ func handleChannels(p Params, c distributorChannels, workerEvents <-chan Event,
 					workingAliveCellCount = 0
 					c.events <- TurnComplete{CompletedTurns: turn}
 					(turn)++
+					//Send all clear to workers to start next turn
 					for i := 0; i < p.Threads; i++ {
-						finishedChannels[i] <- true
-						//semaphore.Post()
+						c.turnFinishedChannels[i] <- true
 					}
 					//fmt.Println("======TURN COMPLETE========")
-					//TODO: Send all-clear to workers using semaphores
 				}
 			case WorkerFinalTurnComplete:
 				workersFinished++
@@ -157,13 +162,58 @@ func handleChannels(p Params, c distributorChannels, workerEvents <-chan Event,
 					//TODO: Retrieve alive cells from workers
 					c.events <- FinalTurnComplete{CompletedTurns: turn, Alive: aliveCells}
 					isDone = true
-					outputImage(p, c, aliveCells)
+					outputImage(p, c, aliveCells, turn)
+				}
+			case CellFlipped:
+				c.events <- event
+			case WorkerSaveImage:
+				savingAliveCells = append(savingAliveCells, e.Alive...)
+				imageStripsSaved++
+				if imageStripsSaved == p.Threads {
+					//fmt.Println("Received alive Cells,", savingAliveCells)
+					outputImage(p, c, savingAliveCells, turn)
+					imageStripsSaved = 0
+					isSaving = false
 				}
 			}
-		case f := <-globalFiller:
-			sendLinesToWorker(p, f, fillers)
+		case f := <-c.globalFiller:
+			sendLinesToWorker(p, f, c)
 		case <-ticker.C:
 			c.events <- AliveCellsCount{CompletedTurns: turn, CellsCount: prevTurnAliveCellCount}
+		case k := <-c.keyPresses:
+			switch k {
+			case 'p':
+				for _, kp := range c.workerKeyPresses {
+					kp <- k
+				}
+				isPaused = !isPaused
+				if isPaused {
+					c.events <- StateChange{turn, Paused}
+				} else {
+					c.events <- StateChange{turn, Executing}
+				}
+				//TODO: Toggle pause and print turn
+			case 's':
+				if !isSaving {
+					for _, kp := range c.workerKeyPresses {
+						kp <- k
+					}
+				}
+				isSaving = !isSaving
+				//saveImage(p, c, turn)
+				//TODO: Save turn as pgm image
+			case 'q':
+				if !isSaving {
+					for _, kp := range c.workerKeyPresses {
+						kp <- k
+					}
+				}
+				isSaving = !isSaving
+				//saveImage(p, c, turn)
+				c.events <- StateChange{turn, Quitting}
+				return turn
+				//TODO: Save turn as pgm image then quit
+			}
 		}
 		if isDone {
 			ticker.Stop()
@@ -172,9 +222,24 @@ func handleChannels(p Params, c distributorChannels, workerEvents <-chan Event,
 	}
 }
 
-func outputImage(p Params, c distributorChannels, aliveCells []util.Cell) {
+func saveImage(p Params, c distributorChannels, turns int) {
+	aliveCells := []util.Cell{}
+	for i := 0; i < p.Threads; i++ {
+		select {
+		case event := <-c.workerEvents:
+			switch e := event.(type) {
+			case WorkerSaveImage:
+				aliveCells = append(aliveCells, e.Alive...)
+				fmt.Println("Received alive Cells,", i, e.Alive)
+			}
+		}
+	}
+	outputImage(p, c, aliveCells, turns)
+}
+
+func outputImage(p Params, c distributorChannels, aliveCells []util.Cell, turns int) {
 	c.ioCommand <- ioOutput
-	s := fmt.Sprintf("%dx%dx%d", p.ImageWidth, p.ImageHeight, p.Turns)
+	s := fmt.Sprintf("%dx%dx%d", p.ImageWidth, p.ImageHeight, turns)
 	c.filename <- s
 
 	world := make([][]byte, p.ImageHeight)
