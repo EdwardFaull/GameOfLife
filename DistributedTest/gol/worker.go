@@ -1,8 +1,6 @@
 package gol
 
 import (
-	"fmt"
-
 	"uk.ac.bris.cs/gameoflife/util"
 )
 
@@ -34,7 +32,6 @@ type filler struct {
 func worker(world [][]byte, p workerParams, c workerChannels, workerID int) ([][]byte, int) {
 
 	isPaused := false
-
 	//For all initially alive cells send a CellFlipped Event.
 	for y, elem := range world {
 		for x, cell := range elem {
@@ -89,26 +86,20 @@ func worker(world [][]byte, p workerParams, c workerChannels, workerID int) ([][
 				break
 			}
 		}
-
 		select {
 		case k := <-c.keyPresses:
 			switch k {
 			case 'p':
-				fmt.Println("Received pause command from worker")
 				isPaused = !isPaused
 			case 's':
-				//fmt.Println("Saving, alive cells:", aliveCells)
 				c.events <- WorkerSaveImage{CompletedTurns: turn, Alive: aliveCells}
-				//TODO: send event
 			case 'q':
 				c.events <- WorkerSaveImage{CompletedTurns: turn, Alive: aliveCells}
-				//TODO: send event
 				return world, turn
 			}
 		default:
 		}
 	}
-	//aliveCells := calculateAliveCells(p, world, workerID)
 	c.events <- WorkerFinalTurnComplete{CompletedTurns: turn, Alive: aliveCells}
 	return world, turn
 }

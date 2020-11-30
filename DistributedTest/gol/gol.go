@@ -1,6 +1,8 @@
 package gol
 
-import "uk.ac.bris.cs/gameoflife/util"
+import (
+	"uk.ac.bris.cs/gameoflife/util"
+)
 
 // Params provides the details of how to run the Game of Life and which image to load.
 type Params struct {
@@ -11,22 +13,15 @@ type Params struct {
 }
 
 // Run starts the processing of Game of Life. It should initialise channels and goroutines.
-func Run(p Params, events chan<- Event, keyPresses <-chan rune, alive []util.Cell) ([]util.Cell, int) {
+func Run(p Params, events chan<- Event, keyPresses <-chan rune, alive []util.Cell,
+	ticker <-chan bool, aliveCells chan<- int, turn chan<- int) ([]util.Cell, int) {
 
 	world := make([][]byte, p.ImageHeight)
 	for i := range world {
 		world[i] = make([]byte, p.ImageWidth)
 	}
-	for i := range world {
-		for j := range world[i] {
-			for _, c := range alive {
-				if c.X == j && c.Y == i {
-					world[i][j] = 255
-				} else {
-					world[i][j] = 0
-				}
-			}
-		}
+	for _, c := range alive {
+		world[c.Y][c.X] = 255
 	}
 
 	distributorChannels := distributorChannels{
@@ -37,6 +32,9 @@ func Run(p Params, events chan<- Event, keyPresses <-chan rune, alive []util.Cel
 		make([]chan filler, p.Threads),
 		make(chan filler),
 		make([]chan bool, p.Threads),
+		ticker,
+		aliveCells,
+		turn,
 	}
 	return distributor(p, distributorChannels, world)
 }
