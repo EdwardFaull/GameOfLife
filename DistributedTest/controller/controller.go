@@ -49,7 +49,6 @@ func main() {
 		"Specify the number of turns to process. Defaults to 10000000000.")
 
 	brokerAddr := flag.String("broker", "127.0.0.1:8030", "Address of broker instance")
-	topic := "gol"
 	flag.Parse()
 
 	//Read image
@@ -85,15 +84,17 @@ func main() {
 	status := new(stubs.StatusReport)
 	//Create a new buffered channel
 	//client.Call(stubs.CreateChannel, stubs.ChannelRequest{Topic: topic, Buffer: 10}, status)
-	publishParams := stubs.PublishParams{
+	initParams := stubs.InitParams{
 		Alive:  aliveCells,
 		Params: params,
 	}
 	events := make(chan gol.Event)
-	towork := stubs.PublishRequest{Topic: topic, Params: &publishParams, Events: events}
+	towork := stubs.InitRequest{Params: &initParams, Events: events}
 	//Call the broker
-	//go handleChannels(client, events)
-	err := client.Call(stubs.Publish, towork, status)
+	err := client.Call(stubs.Initialise, towork, status)
+	//err = client.Call(stubs.Report, stubs.ReportRequest{}, status)
+	go handleChannels(client, events)
+	time.Sleep(10 * time.Second)
 
 	if err != nil {
 		fmt.Println("RPC client returned error:")
@@ -144,12 +145,15 @@ func readImage(p gol.Params, c controllerChannels) []util.Cell {
 
 func handleChannels(client *rpc.Client, events chan gol.Event) {
 	t := time.NewTicker(2 * time.Second)
+	fmt.Println("Handle channels activated")
 	for {
+		fmt.Println("In the controller for loop :D")
 		select {
 		case <-t.C:
-			aliveReport := stubs.AliveReport{Alive: 0, Turn: 0}
-			client.Call(stubs.ReturnAlive, nil, &aliveReport)
-			fmt.Println("Completed turn:", aliveReport.Turn, "   Alive Cells:", aliveReport.Alive)
+			fmt.Println("Calling Tick")
+			aliveReport := stubs.StatusReport{Alive: nil, Turns: 0}
+			client.Call(stubs.Tick, stubs.TickRequest{}, aliveReport)
+			fmt.Println("Completed turn:", aliveReport.Turns, "   Alive Cells:", aliveReport.Alive)
 		case <-events:
 			fmt.Println("Received event")
 		}

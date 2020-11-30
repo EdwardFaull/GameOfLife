@@ -12,33 +12,76 @@ import (
 
 type Engine struct {
 	events     chan gol.Event
+	keyPresses chan rune
 	ticker     chan bool
-	aliveCells chan int
-	turn       chan int
 }
 
 //Begin GoL execution
-func publish(topic string, params stubs.PublishRequest, res *stubs.StatusReport, e *Engine) (err error) {
-	alive, turns := gol.Run(params.Params.Params, params.Events, params.Keypresses, params.Params.Alive,
-		e.ticker, e.aliveCells, e.turn)
-	(*res).Alive = alive
-	(*res).Turns = turns
+func (e *Engine) Initialise(req stubs.InitRequest, res *stubs.StatusReport) (err error) {
+	params := req.Params
+	fmt.Println("Init started")
+	go gol.Run(params.Params, e.events, e.keyPresses, req.Params.Alive, e.ticker)
+	fmt.Println("gol run set off")
 	return err
 }
 
-func (e *Engine) Publish(req stubs.PublishRequest, res *stubs.StatusReport) (err error) {
-	err = publish(req.Topic, req, res, e)
+func (e *Engine) report(req stubs.ReportRequest, res *stubs.StatusReport) {
+	endLoop := false
+	for {
+		select {
+		case event := <-e.events:
+			switch t := event.(type) {
+			case gol.TurnComplete:
+				//TODO
+			case gol.FinalTurnComplete:
+				(*res).Alive = t.Alive
+				(*res).Turns = t.CompletedTurns
+				endLoop = true
+			default:
+				e.events <- event
+			}
+		}
+		if endLoop == true {
+			break
+		}
+	}
+}
+
+func (e *Engine) Report(req stubs.ReportRequest, res *stubs.StatusReport) (err error) {
+	go e.report(req, res)
 	return err
 }
 
-func (e *Engine) ReturnAlive(req stubs.PublishRequest, res *stubs.AliveReport) (err error) {
-	fmt.Println("Returning alive cells")
+func (e *Engine) Tick(req stubs.TickRequest, res *stubs.StatusReport) (err error) {
+	endLoop := false
+	fmt.Println("Received TickRequest")
 	e.ticker <- true
-	alive := <-e.aliveCells
-	turn := <-e.turn
-	(*res).Alive = alive
-	(*res).Turn = turn
-	fmt.Println("Received from distributor:", alive, turn)
+	fmt.Println("Sent ticker bool")
+	for {
+		fmt.Println("Entered for loop")
+		select {
+		case event := <-e.events:
+			fmt.Println("Received event")
+			switch t := event.(type) {
+			case gol.AliveCellsCount:
+				fmt.Println("Received AliveCellsCount event")
+				(*res).Turns = t.CompletedTurns
+				(*res).Alive = nil
+				endLoop = true
+			default:
+				fmt.Println("Received default event")
+				e.events <- event
+			}
+		}
+		if endLoop == true {
+			break
+		}
+	}
+	return err
+}
+
+func (e *Engine) KeyPress(req stubs.KeyPressRequest, res *stubs.StatusReport) (err error) {
+
 	return err
 }
 
@@ -46,7 +89,7 @@ func (e *Engine) ReturnAlive(req stubs.PublishRequest, res *stubs.AliveReport) (
 func main() {
 	pAddr := flag.String("port", "8030", "Port to listen on")
 	flag.Parse()
-	rpc.Register(&Engine{make(chan gol.Event), make(chan bool), make(chan int), make(chan int)})
+	rpc.Register(&Engine{make(chan gol.Event, 1000), make(chan rune, 10), make(chan bool, 10)})
 	listener, _ := net.Listen("tcp", ":"+*pAddr)
 	defer listener.Close()
 	rpc.Accept(listener)

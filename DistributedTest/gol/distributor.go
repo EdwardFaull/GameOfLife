@@ -2,7 +2,6 @@ package gol
 
 import (
 	"fmt"
-	"time"
 
 	"uk.ac.bris.cs/gameoflife/util"
 )
@@ -16,10 +15,7 @@ type distributorChannels struct {
 	fillers              []chan filler
 	globalFiller         chan filler
 	turnFinishedChannels []chan bool
-
-	ticker     <-chan bool
-	aliveCells chan<- int
-	turn       chan<- int
+	ticker               <-chan bool
 }
 
 // distributor divides the work between workers and interacts with other goroutines.
@@ -98,10 +94,7 @@ func handleChannels(p Params, c distributorChannels) ([]util.Cell, int) {
 	isSaving := false
 	imageStripsSaved := 0
 
-	ticker := time.NewTicker(2 * time.Second)
-	ticker.Stop()
-
-	prevTurnAliveCellCount := 0
+	//prevTurnAliveCellCount := 0
 	workingAliveCellCount := 0
 
 	for {
@@ -113,9 +106,9 @@ func handleChannels(p Params, c distributorChannels) ([]util.Cell, int) {
 				workingAliveCellCount += e.CellsCount
 				if workersCompletedTurn == p.Threads {
 					workersCompletedTurn = 0
-					prevTurnAliveCellCount = workingAliveCellCount
+					//prevTurnAliveCellCount = workingAliveCellCount
 					workingAliveCellCount = 0
-					//c.events <- TurnComplete{CompletedTurns: turn}
+					c.events <- TurnComplete{CompletedTurns: turn}
 					(turn)++
 					//Send all clear to workers to start next turn
 					for i := 0; i < p.Threads; i++ {
@@ -126,12 +119,11 @@ func handleChannels(p Params, c distributorChannels) ([]util.Cell, int) {
 				workersFinished++
 				aliveCells = append(aliveCells, e.Alive...)
 				if workersFinished == p.Threads {
-					//c.events <- FinalTurnComplete{CompletedTurns: turn, Alive: aliveCells}
+					c.events <- FinalTurnComplete{CompletedTurns: turn, Alive: aliveCells}
 					isDone = true
 					fmt.Println("Done.")
 				}
 			case CellFlipped:
-				fmt.Println("Sending cellFlipped event")
 				//c.events <- event
 			case WorkerSaveImage:
 				savingAliveCells = append(savingAliveCells, e.Alive...)
@@ -145,10 +137,6 @@ func handleChannels(p Params, c distributorChannels) ([]util.Cell, int) {
 			}
 		case f := <-c.globalFiller:
 			sendLinesToWorker(p, f, c)
-		case <-c.ticker:
-			//c.events <- AliveCellsCount{CompletedTurns: turn, CellsCount: prevTurnAliveCellCount}
-			c.aliveCells <- prevTurnAliveCellCount
-			c.turn <- turn
 		case k := <-c.keyPresses:
 			switch k {
 			case 'p':
@@ -157,9 +145,9 @@ func handleChannels(p Params, c distributorChannels) ([]util.Cell, int) {
 				}
 				isPaused = !isPaused
 				if isPaused {
-					//c.events <- StateChange{turn, Paused}
+					c.events <- StateChange{turn, Paused}
 				} else {
-					//c.events <- StateChange{turn, Executing}
+					c.events <- StateChange{turn, Executing}
 				}
 			case 's':
 				if !isSaving {
@@ -175,9 +163,13 @@ func handleChannels(p Params, c distributorChannels) ([]util.Cell, int) {
 					}
 				}
 				isSaving = !isSaving
-				//c.events <- StateChange{turn, Quitting}
+				c.events <- StateChange{turn, Quitting}
 				return aliveCells, turn
 			}
+		case <-c.ticker:
+			fmt.Println("Distributor received ticker")
+			c.events <- AliveCellsCount{CompletedTurns: turn, CellsCount: len(aliveCells)}
+			fmt.Println("Distributor sent event")
 		}
 		if isDone {
 			//ticker.Stop()
