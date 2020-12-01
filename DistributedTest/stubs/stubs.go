@@ -23,9 +23,7 @@ type InitParams struct {
 //to server. Contains initially alive cells, image dimensions
 //and turns to be executed
 type InitRequest struct {
-	Params     *InitParams
-	Events     chan gol.Event
-	Keypresses chan rune
+	Params *InitParams
 }
 
 /*
@@ -46,9 +44,10 @@ type JobReport struct {
 }
 */
 
-type AliveReport struct {
-	Alive int
-	Turn  int
+type TickReport struct {
+	Turns      int
+	Alive      []util.Cell
+	CellsCount int
 }
 
 type StatusReport struct {
@@ -57,10 +56,6 @@ type StatusReport struct {
 }
 
 type ReportRequest struct {
-	//
-}
-
-type TickRequest struct {
 	//
 }
 

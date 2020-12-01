@@ -123,7 +123,7 @@ func (event ImageOutputComplete) GetCompletedTurns() int {
 }
 
 func (event CellFlipped) String() string {
-	return fmt.Sprintf("")
+	return fmt.Sprintf("CellFlipped")
 }
 
 func (event CellFlipped) GetCompletedTurns() int {
@@ -131,7 +131,7 @@ func (event CellFlipped) GetCompletedTurns() int {
 }
 
 func (event TurnComplete) String() string {
-	return fmt.Sprintf("")
+	return fmt.Sprintf("TurnComplete")
 }
 
 func (event TurnComplete) GetCompletedTurns() int {
@@ -139,7 +139,7 @@ func (event TurnComplete) GetCompletedTurns() int {
 }
 
 func (event FinalTurnComplete) String() string {
-	return fmt.Sprintf("")
+	return fmt.Sprintf("FinalTurnComplete")
 }
 
 func (event FinalTurnComplete) GetCompletedTurns() int {

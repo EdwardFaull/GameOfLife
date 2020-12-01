@@ -53,6 +53,9 @@ func main() {
 
 	//Read image
 
+	events := make(chan gol.Event, 1000)
+	keyPresses := make(chan rune, 10)
+
 	ioCommand := make(chan ioCommand)
 	ioIdle := make(chan bool)
 	input := make(chan byte)
@@ -82,19 +85,16 @@ func main() {
 	//Dial broker address.
 	client, _ := rpc.Dial("tcp", *brokerAddr)
 	status := new(stubs.StatusReport)
-	//Create a new buffered channel
-	//client.Call(stubs.CreateChannel, stubs.ChannelRequest{Topic: topic, Buffer: 10}, status)
 	initParams := stubs.InitParams{
 		Alive:  aliveCells,
 		Params: params,
 	}
-	events := make(chan gol.Event)
-	towork := stubs.InitRequest{Params: &initParams, Events: events}
+	towork := stubs.InitRequest{Params: &initParams}
 	//Call the broker
-	err := client.Call(stubs.Initialise, towork, status)
-	//err = client.Call(stubs.Report, stubs.ReportRequest{}, status)
-	go handleChannels(client, events)
-	time.Sleep(10 * time.Second)
+	err := client.Call(stubs.Initialise, towork, &status)
+	go ticker(client, events)
+	go keyboard(client, keyPresses)
+	time.Sleep(100 * time.Second)
 
 	if err != nil {
 		fmt.Println("RPC client returned error:")
@@ -143,19 +143,37 @@ func readImage(p gol.Params, c controllerChannels) []util.Cell {
 	return aliveCells
 }
 
-func handleChannels(client *rpc.Client, events chan gol.Event) {
-	t := time.NewTicker(2 * time.Second)
-	fmt.Println("Handle channels activated")
+func ticker(client *rpc.Client, events chan gol.Event) {
+	isDone := false
 	for {
-		fmt.Println("In the controller for loop :D")
+		fmt.Println("Calling Tick")
+		aliveReport := stubs.TickReport{}
+		client.Call(stubs.Report, stubs.ReportRequest{}, &aliveReport)
+		fmt.Println("Alive:", aliveReport.Turns)
+		if aliveReport.Alive != nil {
+			fmt.Println("Completed Turns:", aliveReport.Turns, "     Alive Cells:", aliveReport.Alive)
+			events <- gol.FinalTurnComplete{CompletedTurns: aliveReport.Turns, Alive: aliveReport.Alive}
+			isDone = true
+		} else {
+			fmt.Println("Completed Turns:", aliveReport.Turns, "     Alive Cells:", aliveReport.CellsCount)
+			events <- gol.AliveCellsCount{CompletedTurns: aliveReport.Turns, CellsCount: aliveReport.CellsCount}
+		}
+		if isDone {
+			return
+		}
+	}
+}
+
+func keyboard(client *rpc.Client, keyPresses chan rune) {
+	for {
 		select {
-		case <-t.C:
-			fmt.Println("Calling Tick")
-			aliveReport := stubs.StatusReport{Alive: nil, Turns: 0}
-			client.Call(stubs.Tick, stubs.TickRequest{}, aliveReport)
-			fmt.Println("Completed turn:", aliveReport.Turns, "   Alive Cells:", aliveReport.Alive)
-		case <-events:
-			fmt.Println("Received event")
+		case k := <-keyPresses:
+			switch k {
+			case 'p':
+			case 's':
+			case 'q':
+			case 'k':
+			}
 		}
 	}
 }

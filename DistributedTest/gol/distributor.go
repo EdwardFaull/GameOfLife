@@ -1,8 +1,6 @@
 package gol
 
 import (
-	"fmt"
-
 	"uk.ac.bris.cs/gameoflife/util"
 )
 
@@ -60,7 +58,6 @@ func distributor(p Params, c distributorChannels, world [][]byte) ([]util.Cell, 
 	}
 
 	aliveCells, turn := handleChannels(p, c)
-	fmt.Println(aliveCells, turn)
 	// Make sure that the Io has finished any output before exiting.
 	//c.ioCommand <- ioCheckIdle
 
@@ -94,7 +91,7 @@ func handleChannels(p Params, c distributorChannels) ([]util.Cell, int) {
 	isSaving := false
 	imageStripsSaved := 0
 
-	//prevTurnAliveCellCount := 0
+	prevTurnAliveCellCount := 0
 	workingAliveCellCount := 0
 
 	for {
@@ -106,10 +103,10 @@ func handleChannels(p Params, c distributorChannels) ([]util.Cell, int) {
 				workingAliveCellCount += e.CellsCount
 				if workersCompletedTurn == p.Threads {
 					workersCompletedTurn = 0
-					//prevTurnAliveCellCount = workingAliveCellCount
+					prevTurnAliveCellCount = workingAliveCellCount
 					workingAliveCellCount = 0
-					c.events <- TurnComplete{CompletedTurns: turn}
-					(turn)++
+					//c.events <- TurnComplete{CompletedTurns: turn}
+					turn++
 					//Send all clear to workers to start next turn
 					for i := 0; i < p.Threads; i++ {
 						c.turnFinishedChannels[i] <- true
@@ -121,16 +118,11 @@ func handleChannels(p Params, c distributorChannels) ([]util.Cell, int) {
 				if workersFinished == p.Threads {
 					c.events <- FinalTurnComplete{CompletedTurns: turn, Alive: aliveCells}
 					isDone = true
-					fmt.Println("Done.")
 				}
-			case CellFlipped:
-				//c.events <- event
 			case WorkerSaveImage:
 				savingAliveCells = append(savingAliveCells, e.Alive...)
 				imageStripsSaved++
 				if imageStripsSaved == p.Threads {
-					//fmt.Println("Received alive Cells,", savingAliveCells)
-					//outputImage(p, c, savingAliveCells, turn)
 					imageStripsSaved = 0
 					isSaving = false
 				}
@@ -167,9 +159,7 @@ func handleChannels(p Params, c distributorChannels) ([]util.Cell, int) {
 				return aliveCells, turn
 			}
 		case <-c.ticker:
-			fmt.Println("Distributor received ticker")
-			c.events <- AliveCellsCount{CompletedTurns: turn, CellsCount: len(aliveCells)}
-			fmt.Println("Distributor sent event")
+			c.events <- AliveCellsCount{CompletedTurns: turn, CellsCount: prevTurnAliveCellCount}
 		}
 		if isDone {
 			//ticker.Stop()
