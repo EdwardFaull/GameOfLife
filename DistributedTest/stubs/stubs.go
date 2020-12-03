@@ -62,3 +62,8 @@ type ReportRequest struct {
 type KeyPressRequest struct {
 	Key rune
 }
+
+type KeyPressReport struct {
+	Alive []util.Cell
+	Turns int
+}

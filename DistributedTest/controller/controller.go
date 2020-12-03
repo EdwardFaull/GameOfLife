@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"uk.ac.bris.cs/gameoflife/gol"
+	"uk.ac.bris.cs/gameoflife/sdl"
 	"uk.ac.bris.cs/gameoflife/stubs"
 	"uk.ac.bris.cs/gameoflife/util"
 )
@@ -91,20 +92,10 @@ func main() {
 	}
 	towork := stubs.InitRequest{Params: &initParams}
 	//Call the broker
-	err := client.Call(stubs.Initialise, towork, &status)
+	client.Call(stubs.Initialise, towork, &status)
 	go ticker(client, events)
 	go keyboard(client, keyPresses)
-	time.Sleep(100 * time.Second)
-
-	if err != nil {
-		fmt.Println("RPC client returned error:")
-		fmt.Println(err)
-		fmt.Println("Shutting down miner.")
-	} else {
-		fmt.Println("Completed turns")
-		fmt.Println("Alive:", status.Alive)
-		fmt.Println("Turns:", status.Turns)
-	}
+	sdl.Start(params, events, keyPresses)
 }
 
 func readImage(p gol.Params, c controllerChannels) []util.Cell {
@@ -144,22 +135,22 @@ func readImage(p gol.Params, c controllerChannels) []util.Cell {
 }
 
 func ticker(client *rpc.Client, events chan gol.Event) {
+	ticker := time.NewTicker(2 * time.Second)
 	isDone := false
 	for {
-		fmt.Println("Calling Tick")
-		aliveReport := stubs.TickReport{}
-		client.Call(stubs.Report, stubs.ReportRequest{}, &aliveReport)
-		fmt.Println("Alive:", aliveReport.Turns)
-		if aliveReport.Alive != nil {
-			fmt.Println("Completed Turns:", aliveReport.Turns, "     Alive Cells:", aliveReport.Alive)
-			events <- gol.FinalTurnComplete{CompletedTurns: aliveReport.Turns, Alive: aliveReport.Alive}
-			isDone = true
-		} else {
-			fmt.Println("Completed Turns:", aliveReport.Turns, "     Alive Cells:", aliveReport.CellsCount)
-			events <- gol.AliveCellsCount{CompletedTurns: aliveReport.Turns, CellsCount: aliveReport.CellsCount}
-		}
-		if isDone {
-			return
+		select {
+		case <-ticker.C:
+			aliveReport := stubs.TickReport{}
+			client.Call(stubs.Report, stubs.ReportRequest{}, &aliveReport)
+			if aliveReport.Alive != nil {
+				events <- gol.FinalTurnComplete{CompletedTurns: aliveReport.Turns, Alive: aliveReport.Alive}
+				isDone = true
+			} else {
+				events <- gol.AliveCellsCount{CompletedTurns: aliveReport.Turns, CellsCount: aliveReport.CellsCount}
+			}
+			if isDone {
+				return
+			}
 		}
 	}
 }
@@ -168,12 +159,10 @@ func keyboard(client *rpc.Client, keyPresses chan rune) {
 	for {
 		select {
 		case k := <-keyPresses:
-			switch k {
-			case 'p':
-			case 's':
-			case 'q':
-			case 'k':
-			}
+			fmt.Println("Received input: ", k)
+			request := stubs.KeyPressRequest{Key: k}
+			keyPressReport := stubs.KeyPressReport{Alive: nil, Turns: 0}
+			client.Call(stubs.KeyPress, request, &keyPressReport)
 		}
 	}
 }

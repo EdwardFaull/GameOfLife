@@ -28,14 +28,12 @@ func (e *Engine) Initialise(req stubs.InitRequest, res *stubs.StatusReport) (err
 }
 
 func (e *Engine) Report(req stubs.ReportRequest, res *stubs.TickReport) (err error) {
+	e.tickerChan <- true
 	for {
 		select {
-		case <-e.ticker.C:
-			e.tickerChan <- true
 		case event := <-e.events:
 			switch t := event.(type) {
 			case gol.AliveCellsCount:
-				//fmt.Println("Received AliveCellsCount event")
 				fmt.Println("AliveCellsCount: Alive:", t.CellsCount, "   Turn:", t.CompletedTurns)
 				(*res).CellsCount = t.CellsCount
 				(*res).Turns = t.CompletedTurns
@@ -52,7 +50,7 @@ func (e *Engine) Report(req stubs.ReportRequest, res *stubs.TickReport) (err err
 }
 
 func (e *Engine) KeyPress(req stubs.KeyPressRequest, res *stubs.StatusReport) (err error) {
-
+	fmt.Println("Doing KeyPress")
 	return err
 }
 
