@@ -181,10 +181,10 @@ func keyboard(client *rpc.Client, keyPresses chan rune, events chan gol.Event,
 				for _, cell := range previousAliveCells {
 					events <- gol.CellFlipped{CompletedTurns: keyPressReport.Turns, Cell: cell}
 				}
-				events <- gol.TurnComplete{CompletedTurns: 0}
 				for _, cell := range keyPressReport.Alive {
 					events <- gol.CellFlipped{CompletedTurns: keyPressReport.Turns, Cell: cell}
 				}
+				events <- gol.TurnComplete{CompletedTurns: 0}
 				//events <- gol.TurnComplete{CompletedTurns: keyPressReport.Turns}
 				previousAliveCells = keyPressReport.Alive
 			case 's':
