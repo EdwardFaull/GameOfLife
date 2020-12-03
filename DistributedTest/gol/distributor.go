@@ -5,14 +5,15 @@ import (
 )
 
 type distributorChannels struct {
-	events     chan<- Event
-	keyPresses <-chan rune
+	events         chan<- Event
+	keyPressEvents chan<- Event
+	keyPresses     <-chan rune
 
 	workerEvents         chan Event
 	workerKeyPresses     []chan rune
 	fillers              []chan filler
 	globalFiller         chan filler
-	turnFinishedChannels []chan bool
+	turnFinishedChannels []chan int
 	ticker               <-chan bool
 }
 
@@ -34,7 +35,7 @@ func distributor(p Params, c distributorChannels, world [][]byte) ([]util.Cell, 
 		fillerElement := make(chan filler, p.Threads)
 		c.fillers[t] = fillerElement
 
-		finishedChannel := make(chan bool)
+		finishedChannel := make(chan int)
 		c.turnFinishedChannels[t] = finishedChannel
 
 		keyPress := make(chan rune, 10)
@@ -59,11 +60,9 @@ func distributor(p Params, c distributorChannels, world [][]byte) ([]util.Cell, 
 
 	aliveCells, turn := handleChannels(p, c)
 	// Make sure that the Io has finished any output before exiting.
-	//c.ioCommand <- ioCheckIdle
-
 	//c.events <- StateChange{turn, Quitting}
 	// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
-	//close(c.events)
+	close(c.events)
 
 	return aliveCells, turn
 }
@@ -84,6 +83,8 @@ func handleChannels(p Params, c distributorChannels) ([]util.Cell, int) {
 	aliveCells := []util.Cell{}
 	savingAliveCells := []util.Cell{}
 
+	//finishedTurn := make(chan []util.Cell, 1)
+
 	workersCompletedTurn := 0
 	workersFinished := 0
 	turn := 0
@@ -91,8 +92,8 @@ func handleChannels(p Params, c distributorChannels) ([]util.Cell, int) {
 	isSaving := false
 	imageStripsSaved := 0
 
-	prevTurnAliveCellCount := 0
-	workingAliveCellCount := 0
+	prevTurnAliveCells := []util.Cell{}
+	workingAliveCells := []util.Cell{}
 
 	for {
 		select {
@@ -100,16 +101,16 @@ func handleChannels(p Params, c distributorChannels) ([]util.Cell, int) {
 			switch e := event.(type) {
 			case WorkerTurnComplete:
 				workersCompletedTurn++
-				workingAliveCellCount += e.CellsCount
+				workingAliveCells = append(workingAliveCells, e.Alive...)
 				if workersCompletedTurn == p.Threads {
 					workersCompletedTurn = 0
-					prevTurnAliveCellCount = workingAliveCellCount
-					workingAliveCellCount = 0
+					prevTurnAliveCells = workingAliveCells
+					workingAliveCells = nil
 					//c.events <- TurnComplete{CompletedTurns: turn}
 					turn++
 					//Send all clear to workers to start next turn
 					for i := 0; i < p.Threads; i++ {
-						c.turnFinishedChannels[i] <- true
+						c.turnFinishedChannels[i] <- turn
 					}
 				}
 			case WorkerFinalTurnComplete:
@@ -125,6 +126,7 @@ func handleChannels(p Params, c distributorChannels) ([]util.Cell, int) {
 				if imageStripsSaved == p.Threads {
 					imageStripsSaved = 0
 					isSaving = false
+					c.keyPressEvents <- StateChange{turn, Saving, savingAliveCells}
 				}
 			}
 		case f := <-c.globalFiller:
@@ -137,9 +139,20 @@ func handleChannels(p Params, c distributorChannels) ([]util.Cell, int) {
 				}
 				isPaused = !isPaused
 				if isPaused {
-					c.events <- StateChange{turn, Paused}
+					/*for {
+						select {
+						case t := <-finishedTurn:
+							if t == turn {
+								cells := <-finishedTurnCells
+								c.keyPressEvents <- StateChange{turn, Paused, cells}
+							} else {
+								<-finishedTurnCells
+							}
+						}
+					}*/
+					c.keyPressEvents <- StateChange{turn, Paused, prevTurnAliveCells}
 				} else {
-					c.events <- StateChange{turn, Executing}
+					c.keyPressEvents <- StateChange{turn, Executing, nil}
 				}
 			case 's':
 				if !isSaving {
@@ -155,11 +168,11 @@ func handleChannels(p Params, c distributorChannels) ([]util.Cell, int) {
 					}
 				}
 				isSaving = !isSaving
-				c.events <- StateChange{turn, Quitting}
+				c.keyPressEvents <- StateChange{turn, Quitting, prevTurnAliveCells}
 				return aliveCells, turn
 			}
 		case <-c.ticker:
-			c.events <- AliveCellsCount{CompletedTurns: turn, CellsCount: prevTurnAliveCellCount}
+			c.events <- AliveCellsCount{CompletedTurns: turn, CellsCount: len(prevTurnAliveCells)}
 		}
 		if isDone {
 			//ticker.Stop()
@@ -169,42 +182,5 @@ func handleChannels(p Params, c distributorChannels) ([]util.Cell, int) {
 }
 
 /*
-func saveImage(p Params, c distributorChannels, turns int) {
-	aliveCells := []util.Cell{}
-	for i := 0; i < p.Threads; i++ {
-		select {
-		case event := <-c.workerEvents:
-			switch e := event.(type) {
-			case WorkerSaveImage:
-				aliveCells = append(aliveCells, e.Alive...)
-				fmt.Println("Received alive Cells,", i, e.Alive)
-			}
-		}
-	}
-	outputImage(p, c, aliveCells, turns)
-}
 
-func outputImage(p Params, c distributorChannels, aliveCells []util.Cell, turns int) {
-	//c.ioCommand <- ioOutput
-	s := fmt.Sprintf("%dx%dx%d", p.ImageWidth, p.ImageHeight, turns)
-	c.filename <- s
-
-	world := make([][]byte, p.ImageHeight)
-	for i := range world {
-		world[i] = make([]byte, p.ImageWidth)
-		for j := range world[i] {
-			world[i][j] = 0
-		}
-	}
-
-	for _, cell := range aliveCells {
-		world[cell.Y][cell.X] = 255
-	}
-
-	for i := 0; i < p.ImageHeight; i++ {
-		for j := 0; j < p.ImageWidth; j++ {
-			c.output <- world[i][j]
-		}
-	}
-}
-*/
+ */

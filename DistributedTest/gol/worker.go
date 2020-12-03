@@ -17,7 +17,7 @@ type workerChannels struct {
 	distributorEvents <-chan Event
 	globalFiller      chan<- filler
 	workerFiller      <-chan filler
-	finishedChannel   <-chan bool
+	finishedChannel   <-chan int
 	keyPresses        <-chan rune
 }
 
@@ -70,18 +70,19 @@ func worker(world [][]byte, p workerParams, c workerChannels, workerID int) ([][
 			//Execute turn of game
 			world, aliveCells = calculateNextState(workerID, p, world, c, turn, upperLine, lowerLine)
 			//Send completion event to distributor
-			c.events <- WorkerTurnComplete{CompletedTurns: turn, CellsCount: len(aliveCells)}
+			c.events <- WorkerTurnComplete{CompletedTurns: turn, Alive: aliveCells}
 			canContinue := false
 			for {
 				select {
-				case b := <-c.finishedChannel:
-					canContinue = b
+				case x := <-c.finishedChannel:
+					turn = x
+					canContinue = true
 				}
 				if canContinue {
 					break
 				}
 			}
-			turn++
+			//turn++
 			if turn == p.Turns {
 				break
 			}

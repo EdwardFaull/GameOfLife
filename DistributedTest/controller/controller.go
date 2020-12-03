@@ -56,6 +56,7 @@ func main() {
 
 	events := make(chan gol.Event, 1000)
 	keyPresses := make(chan rune, 10)
+	quit := make(chan bool)
 
 	ioCommand := make(chan ioCommand)
 	ioIdle := make(chan bool)
@@ -93,8 +94,8 @@ func main() {
 	towork := stubs.InitRequest{Params: &initParams}
 	//Call the broker
 	client.Call(stubs.Initialise, towork, &status)
-	go ticker(client, events)
-	go keyboard(client, keyPresses)
+	go ticker(client, events, quit)
+	go keyboard(client, keyPresses, events, params, controllerChannels, quit)
 	sdl.Start(params, events, keyPresses)
 }
 
@@ -134,7 +135,7 @@ func readImage(p gol.Params, c controllerChannels) []util.Cell {
 	return aliveCells
 }
 
-func ticker(client *rpc.Client, events chan gol.Event) {
+func ticker(client *rpc.Client, events chan gol.Event, quit <-chan bool) {
 	ticker := time.NewTicker(2 * time.Second)
 	isDone := false
 	for {
@@ -151,11 +152,17 @@ func ticker(client *rpc.Client, events chan gol.Event) {
 			if isDone {
 				return
 			}
+		case <-quit:
+			ticker.Stop()
+			return
 		}
 	}
 }
 
-func keyboard(client *rpc.Client, keyPresses chan rune) {
+func keyboard(client *rpc.Client, keyPresses chan rune, events chan gol.Event,
+	p gol.Params, c controllerChannels, quit chan<- bool) {
+	previousAliveCells := []util.Cell{}
+	isDone := false
 	for {
 		select {
 		case k := <-keyPresses:
@@ -163,6 +170,60 @@ func keyboard(client *rpc.Client, keyPresses chan rune) {
 			request := stubs.KeyPressRequest{Key: k}
 			keyPressReport := stubs.KeyPressReport{Alive: nil, Turns: 0}
 			client.Call(stubs.KeyPress, request, &keyPressReport)
+			if keyPressReport.State != gol.Saving {
+				events <- gol.StateChange{
+					CompletedTurns: keyPressReport.Turns,
+					Alive:          keyPressReport.Alive,
+					NewState:       keyPressReport.State}
+			}
+			switch k {
+			case 'p':
+				for _, cell := range previousAliveCells {
+					events <- gol.CellFlipped{CompletedTurns: keyPressReport.Turns, Cell: cell}
+				}
+				events <- gol.TurnComplete{CompletedTurns: 0}
+				for _, cell := range keyPressReport.Alive {
+					events <- gol.CellFlipped{CompletedTurns: keyPressReport.Turns, Cell: cell}
+				}
+				//events <- gol.TurnComplete{CompletedTurns: keyPressReport.Turns}
+				previousAliveCells = keyPressReport.Alive
+			case 's':
+				outputImage(p, c, keyPressReport.Alive, keyPressReport.Turns)
+			case 'q':
+				outputImage(p, c, keyPressReport.Alive, keyPressReport.Turns)
+				c.command <- ioCheckIdle
+				<-c.ioIdle
+				close(events)
+				isDone = true
+				quit <- true
+			}
+		}
+		if isDone {
+			break
+		}
+	}
+}
+
+func outputImage(p gol.Params, c controllerChannels, aliveCells []util.Cell, turns int) {
+	c.command <- ioOutput
+	s := fmt.Sprintf("%dx%dx%d", p.ImageWidth, p.ImageHeight, turns)
+	c.filename <- s
+
+	world := make([][]byte, p.ImageHeight)
+	for i := range world {
+		world[i] = make([]byte, p.ImageWidth)
+		for j := range world[i] {
+			world[i][j] = 0
+		}
+	}
+
+	for _, cell := range aliveCells {
+		world[cell.Y][cell.X] = 255
+	}
+
+	for i := 0; i < p.ImageHeight; i++ {
+		for j := 0; j < p.ImageWidth; j++ {
+			c.output <- world[i][j]
 		}
 	}
 }

@@ -36,6 +36,7 @@ const (
 	Paused State = iota
 	Executing
 	Quitting
+	Saving
 )
 
 // StateChange is an Event notifying the user about the change of state of execution.
@@ -43,6 +44,7 @@ const (
 type StateChange struct { // implements Event
 	CompletedTurns int
 	NewState       State
+	Alive          []util.Cell
 }
 
 // CellFlipped is an Event notifying the GUI about a change of state of a single cell.
@@ -62,7 +64,7 @@ type TurnComplete struct { // implements Event
 
 type WorkerTurnComplete struct {
 	CompletedTurns int
-	CellsCount     int
+	Alive          []util.Cell
 }
 
 // FinalTurnComplete is an Event notifying the testing framework about the new world state after execution finished.

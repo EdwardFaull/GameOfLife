@@ -12,17 +12,18 @@ import (
 )
 
 type Engine struct {
-	events     chan gol.Event
-	keyPresses chan rune
-	tickerChan chan bool
-	ticker     *time.Ticker
+	events         chan gol.Event
+	keyPresses     chan rune
+	keyPressEvents chan gol.Event
+	tickerChan     chan bool
+	ticker         *time.Ticker
 }
 
 //Begin GoL execution
 func (e *Engine) Initialise(req stubs.InitRequest, res *stubs.StatusReport) (err error) {
 	params := req.Params
 	fmt.Println("Init started")
-	go gol.Run(params.Params, e.events, e.keyPresses, req.Params.Alive, e.tickerChan)
+	go gol.Run(params.Params, e.events, e.keyPresses, e.keyPressEvents, req.Params.Alive, e.tickerChan)
 	fmt.Println("gol run set off")
 	return err
 }
@@ -49,8 +50,18 @@ func (e *Engine) Report(req stubs.ReportRequest, res *stubs.TickReport) (err err
 	return err
 }
 
-func (e *Engine) KeyPress(req stubs.KeyPressRequest, res *stubs.StatusReport) (err error) {
+func (e *Engine) KeyPress(req stubs.KeyPressRequest, res *stubs.KeyPressReport) (err error) {
 	fmt.Println("Doing KeyPress")
+	e.keyPresses <- req.Key
+	select {
+	case k := <-e.keyPressEvents:
+		switch t := k.(type) {
+		case gol.StateChange:
+			(*res).Alive = t.Alive
+			(*res).Turns = t.CompletedTurns
+			(*res).State = t.NewState
+		}
+	}
 	return err
 }
 
@@ -58,7 +69,7 @@ func (e *Engine) KeyPress(req stubs.KeyPressRequest, res *stubs.StatusReport) (e
 func main() {
 	pAddr := flag.String("port", "8030", "Port to listen on")
 	flag.Parse()
-	rpc.Register(&Engine{make(chan gol.Event, 1000), make(chan rune, 10), make(chan bool, 10),
+	rpc.Register(&Engine{make(chan gol.Event, 1000), make(chan rune, 10), make(chan gol.Event, 1000), make(chan bool, 10),
 		time.NewTicker(2 * time.Second)})
 	listener, _ := net.Listen("tcp", ":"+*pAddr)
 	defer listener.Close()

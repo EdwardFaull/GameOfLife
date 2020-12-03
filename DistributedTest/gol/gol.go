@@ -13,7 +13,8 @@ type Params struct {
 }
 
 // Run starts the processing of Game of Life. It should initialise channels and goroutines.
-func Run(p Params, events chan<- Event, keyPresses <-chan rune, alive []util.Cell, ticker <-chan bool) ([]util.Cell, int) {
+func Run(p Params, events chan<- Event, keyPresses <-chan rune, keyPressEvents chan<- Event,
+	alive []util.Cell, ticker <-chan bool) ([]util.Cell, int) {
 
 	world := make([][]byte, p.ImageHeight)
 	for i := range world {
@@ -25,12 +26,13 @@ func Run(p Params, events chan<- Event, keyPresses <-chan rune, alive []util.Cel
 
 	distributorChannels := distributorChannels{
 		events,
+		keyPressEvents,
 		keyPresses,
 		make(chan Event),
 		make([]chan rune, p.Threads),
 		make([]chan filler, p.Threads),
 		make(chan filler),
-		make([]chan bool, p.Threads),
+		make([]chan int, p.Threads),
 		ticker,
 	}
 	return distributor(p, distributorChannels, world)

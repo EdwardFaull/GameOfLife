@@ -66,4 +66,5 @@ type KeyPressRequest struct {
 type KeyPressReport struct {
 	Alive []util.Cell
 	Turns int
+	State gol.State
 }
