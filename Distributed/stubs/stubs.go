@@ -1,23 +1,32 @@
 package stubs
 
-import "uk/gameoflife/util"
+import (
+	"uk.ac.bris.cs/gameoflife/gol"
+	"uk.ac.bris.cs/gameoflife/util"
+)
 
-var CreateChannel = "Broker.CreateChannel"
-var Publish = "Broker.Publish"
-var Subscribe = "Broker.Subscribe"
+var CreateChannel = "Engine.CreateChannel"
+var Publish = "Engine.Publish"
+var Subscribe = "Engine.Subscribe"
+var ReturnAlive = "Engine.ReturnAlive"
+var Initialise = "Engine.Initialise"
+var Report = "Engine.Report"
+var Tick = "Engine.Tick"
+var KeyPress = "Engine.KeyPress"
 
-type parameters struct {
-	initialCells []util.Cell
-	turns        int
-	imageHeight  int
-	imageWidth   int
+type InitParams struct {
+	Alive  []util.Cell
+	Params gol.Params
 }
 
-type PublishRequest struct {
-	Topic string
-	p     parameters
+//Structure used by controller to send initial GoL parameters
+//to server. Contains initially alive cells, image dimensions
+//and turns to be executed
+type InitRequest struct {
+	Params *InitParams
 }
 
+/*
 type ChannelRequest struct {
 	Topic  string
 	Buffer int
@@ -30,9 +39,32 @@ type Subscription struct {
 }
 
 type JobReport struct {
-	Result []util.Cell
+	Alive []util.Cell
+	Turns int
+}
+*/
+
+type TickReport struct {
+	Turns      int
+	Alive      []util.Cell
+	CellsCount int
 }
 
 type StatusReport struct {
-	Message string
+	Alive []util.Cell
+	Turns int
+}
+
+type ReportRequest struct {
+	//
+}
+
+type KeyPressRequest struct {
+	Key rune
+}
+
+type KeyPressReport struct {
+	Alive []util.Cell
+	Turns int
+	State gol.State
 }
