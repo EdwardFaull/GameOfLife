@@ -48,18 +48,24 @@ func worker(world [][]byte, p workerParams, c workerChannels, workerID int) {
 
 	turn := 0
 	aliveCells := []util.Cell{}
+	aliveCells = calculateAliveCells(p, world, workerID)
 
 	//Executes all turns of the Game of Life.
 	for {
 		//TODO: Semaphores
 		//Send top and bottom arrays to distributor
 		if !isPaused {
+			if turn == p.Turns {
+				break
+			}
 			aliveCells = []util.Cell{}
 			c.globalFiller <- filler{lowerLine: world[0], upperLine: world[p.ImageHeight-1], workerID: workerID}
+			//fmt.Println(workerID, "sent fillers")
 
 			//Receive lines outside world's boundaries for use in this worker
 			receivedFiller := <-c.workerFiller
 			receivedFiller2 := <-c.workerFiller
+			//fmt.Println(workerID, "got fillers")
 			//Decide which filler delivered which line
 			upperLine := []byte{}
 			lowerLine := []byte{}
@@ -85,9 +91,6 @@ func worker(world [][]byte, p workerParams, c workerChannels, workerID int) {
 				}
 			}
 			turn++
-			if turn == p.Turns {
-				break
-			}
 		}
 
 		select {

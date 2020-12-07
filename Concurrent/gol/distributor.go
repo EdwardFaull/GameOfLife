@@ -95,6 +95,7 @@ func distributor(p Params, c distributorChannels) {
 			finishedChannel: finishedChannel,
 			keyPresses:      keyPress,
 		}
+		//fmt.Println("Sent worker", t)
 		go worker(world[startY:endY], workerParams, workerChannels, t)
 	}
 

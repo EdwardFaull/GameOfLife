@@ -23,7 +23,8 @@ type InitParams struct {
 //to server. Contains initially alive cells, image dimensions
 //and turns to be executed
 type InitRequest struct {
-	Params *InitParams
+	Params         *InitParams
+	ShouldContinue int
 }
 
 /*

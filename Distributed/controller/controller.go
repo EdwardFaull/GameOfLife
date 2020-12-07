@@ -24,6 +24,7 @@ type controllerChannels struct {
 func main() {
 	runtime.LockOSThread()
 	var params gol.Params
+	var shouldContinue int
 
 	flag.IntVar(
 		&params.Threads,
@@ -48,6 +49,12 @@ func main() {
 		"turns",
 		10000000000,
 		"Specify the number of turns to process. Defaults to 10000000000.")
+
+	flag.IntVar(
+		&shouldContinue,
+		"c",
+		0,
+		"Specify if the controller should resume the previous game of life. 1 to continue, 0 to create a new game. Defaults to 0")
 
 	brokerAddr := flag.String("broker", "127.0.0.1:8030", "Address of broker instance")
 	flag.Parse()
@@ -91,7 +98,7 @@ func main() {
 		Alive:  aliveCells,
 		Params: params,
 	}
-	towork := stubs.InitRequest{Params: &initParams}
+	towork := stubs.InitRequest{Params: &initParams, ShouldContinue: shouldContinue}
 	//Call the broker
 	client.Call(stubs.Initialise, towork, &status)
 	go ticker(client, events, quit)
@@ -163,6 +170,7 @@ func keyboard(client *rpc.Client, keyPresses chan rune, events chan gol.Event,
 	p gol.Params, c controllerChannels, quit chan<- bool) {
 	previousAliveCells := []util.Cell{}
 	isDone := false
+	//isPaused := false
 	for {
 		select {
 		case k := <-keyPresses:
@@ -170,7 +178,9 @@ func keyboard(client *rpc.Client, keyPresses chan rune, events chan gol.Event,
 			request := stubs.KeyPressRequest{Key: k}
 			keyPressReport := stubs.KeyPressReport{Alive: nil, Turns: 0}
 			client.Call(stubs.KeyPress, request, &keyPressReport)
+			fmt.Println("State:", keyPressReport.State.String())
 			if keyPressReport.State != gol.Saving {
+				fmt.Println("Sending statechange event")
 				events <- gol.StateChange{
 					CompletedTurns: keyPressReport.Turns,
 					Alive:          keyPressReport.Alive,
@@ -185,6 +195,7 @@ func keyboard(client *rpc.Client, keyPresses chan rune, events chan gol.Event,
 					events <- gol.CellFlipped{CompletedTurns: keyPressReport.Turns, Cell: cell}
 				}
 				events <- gol.TurnComplete{CompletedTurns: 0}
+
 				//events <- gol.TurnComplete{CompletedTurns: keyPressReport.Turns}
 				previousAliveCells = keyPressReport.Alive
 			case 's':

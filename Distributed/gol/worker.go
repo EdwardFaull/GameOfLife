@@ -1,6 +1,8 @@
 package gol
 
 import (
+	"fmt"
+
 	"uk.ac.bris.cs/gameoflife/util"
 )
 
@@ -19,6 +21,7 @@ type workerChannels struct {
 	workerFiller      <-chan filler
 	finishedChannel   <-chan int
 	keyPresses        <-chan rune
+	killChan          <-chan bool
 }
 
 //Used to send the top and bottom arrays of each worker's world to the distributor,
@@ -53,7 +56,6 @@ func worker(world [][]byte, p workerParams, c workerChannels, workerID int) ([][
 		if !isPaused {
 			aliveCells = []util.Cell{}
 			c.globalFiller <- filler{lowerLine: world[0], upperLine: world[p.ImageHeight-1], workerID: workerID}
-
 			//Receive lines outside world's boundaries for use in this worker
 			receivedFiller := <-c.workerFiller
 			receivedFiller2 := <-c.workerFiller
@@ -71,6 +73,7 @@ func worker(world [][]byte, p workerParams, c workerChannels, workerID int) ([][
 			world, aliveCells = calculateNextState(workerID, p, world, c, turn, upperLine, lowerLine)
 			//Send completion event to distributor
 			c.events <- WorkerTurnComplete{CompletedTurns: turn, Alive: aliveCells}
+			//fmt.Println("Worker", workerID, "completed turn", turn)
 			canContinue := false
 			for {
 				select {
@@ -96,8 +99,14 @@ func worker(world [][]byte, p workerParams, c workerChannels, workerID int) ([][
 				c.events <- WorkerSaveImage{CompletedTurns: turn, Alive: aliveCells}
 			case 'q':
 				c.events <- WorkerSaveImage{CompletedTurns: turn, Alive: aliveCells}
-				return world, turn
+				isPaused = true
+				//return world, turn
+			case 'r':
+				isPaused = false
 			}
+		case <-c.killChan:
+			fmt.Println("Destroyed worker")
+			return world, turn
 		default:
 		}
 	}

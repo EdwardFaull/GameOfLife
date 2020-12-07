@@ -1,6 +1,8 @@
 package gol
 
 import (
+	"fmt"
+
 	"uk.ac.bris.cs/gameoflife/util"
 )
 
@@ -15,11 +17,14 @@ type distributorChannels struct {
 	globalFiller         chan filler
 	turnFinishedChannels []chan int
 	ticker               <-chan bool
+	killChan             <-chan bool
+	workerKillChan       []chan<- bool
 }
 
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p Params, c distributorChannels, world [][]byte) ([]util.Cell, int) {
 
+	fmt.Println("Began new GoL")
 	//TODO: Initialise semaphores for locking finished workers
 	turn := 0
 	threadHeight := float32(p.ImageHeight) / float32(p.Threads)
@@ -41,6 +46,9 @@ func distributor(p Params, c distributorChannels, world [][]byte) ([]util.Cell, 
 		keyPress := make(chan rune, 10)
 		c.workerKeyPresses[t] = keyPress
 
+		killChan := make(chan bool)
+		c.workerKillChan[t] = killChan
+
 		workerParams := workerParams{
 			StartY:      startY,
 			EndY:        endY,
@@ -54,7 +62,9 @@ func distributor(p Params, c distributorChannels, world [][]byte) ([]util.Cell, 
 			workerFiller:    fillerElement,
 			finishedChannel: finishedChannel,
 			keyPresses:      keyPress,
+			killChan:        killChan,
 		}
+		//fmt.Println("Created new worker")
 		go worker(world[startY:endY], workerParams, workerChannels, t)
 	}
 
@@ -62,7 +72,7 @@ func distributor(p Params, c distributorChannels, world [][]byte) ([]util.Cell, 
 	// Make sure that the Io has finished any output before exiting.
 	//c.events <- StateChange{turn, Quitting}
 	// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
-	close(c.events)
+	//close(c.events)
 
 	return aliveCells, turn
 }
@@ -76,21 +86,16 @@ func sendLinesToWorker(p Params, f filler, c distributorChannels) {
 	}
 	c.fillers[upperWorker] <- filler{lowerLine: nil, upperLine: f.upperLine, workerID: worker}
 	c.fillers[lowerWorker] <- filler{lowerLine: f.lowerLine, upperLine: nil, workerID: worker}
+	//fmt.Println("Lines sent to worker from distributor")
 }
 
 func handleChannels(p Params, c distributorChannels) ([]util.Cell, int) {
 	isDone := false
 	aliveCells := []util.Cell{}
-	savingAliveCells := []util.Cell{}
-
-	//finishedTurn := make(chan []util.Cell, 1)
-
 	workersCompletedTurn := 0
 	workersFinished := 0
 	turn := 0
 	isPaused := false
-	isSaving := false
-	imageStripsSaved := 0
 
 	prevTurnAliveCells := []util.Cell{}
 	workingAliveCells := []util.Cell{}
@@ -106,7 +111,6 @@ func handleChannels(p Params, c distributorChannels) ([]util.Cell, int) {
 					workersCompletedTurn = 0
 					prevTurnAliveCells = workingAliveCells
 					workingAliveCells = nil
-					//c.events <- TurnComplete{CompletedTurns: turn}
 					turn++
 					//Send all clear to workers to start next turn
 					for i := 0; i < p.Threads; i++ {
@@ -120,14 +124,6 @@ func handleChannels(p Params, c distributorChannels) ([]util.Cell, int) {
 					c.events <- FinalTurnComplete{CompletedTurns: turn, Alive: aliveCells}
 					isDone = true
 				}
-			case WorkerSaveImage:
-				savingAliveCells = append(savingAliveCells, e.Alive...)
-				imageStripsSaved++
-				if imageStripsSaved == p.Threads {
-					imageStripsSaved = 0
-					isSaving = false
-					c.keyPressEvents <- StateChange{turn, Saving, savingAliveCells}
-				}
 			}
 		case f := <-c.globalFiller:
 			sendLinesToWorker(p, f, c)
@@ -139,40 +135,36 @@ func handleChannels(p Params, c distributorChannels) ([]util.Cell, int) {
 				}
 				isPaused = !isPaused
 				if isPaused {
-					/*for {
-						select {
-						case t := <-finishedTurn:
-							if t == turn {
-								cells := <-finishedTurnCells
-								c.keyPressEvents <- StateChange{turn, Paused, cells}
-							} else {
-								<-finishedTurnCells
-							}
-						}
-					}*/
+					fmt.Println("Line 138 pause event at turn", turn)
 					c.keyPressEvents <- StateChange{turn, Paused, prevTurnAliveCells}
 				} else {
+					fmt.Println("Line 141 execute event at turn", turn)
 					c.keyPressEvents <- StateChange{turn, Executing, nil}
 				}
 			case 's':
-				if !isSaving {
-					for _, kp := range c.workerKeyPresses {
-						kp <- k
-					}
-				}
-				isSaving = !isSaving
+				fmt.Println("Line 145 save event at turn", turn)
+				c.keyPressEvents <- StateChange{turn, Saving, prevTurnAliveCells}
 			case 'q':
-				if !isSaving {
-					for _, kp := range c.workerKeyPresses {
-						kp <- k
-					}
-				}
-				isSaving = !isSaving
+				fmt.Println("Line 148 quit event at turn", turn)
 				c.keyPressEvents <- StateChange{turn, Quitting, prevTurnAliveCells}
-				return aliveCells, turn
+				for _, kp := range c.workerKeyPresses {
+					kp <- k
+				}
+				isPaused = true
+			case 'r':
+				for _, kp := range c.workerKeyPresses {
+					kp <- k
+				}
+				isPaused = false
 			}
 		case <-c.ticker:
 			c.events <- AliveCellsCount{CompletedTurns: turn, CellsCount: len(prevTurnAliveCells)}
+		case <-c.killChan:
+			for _, e := range c.workerKillChan {
+				e <- true
+			}
+			fmt.Println("Destroying distributor")
+			return aliveCells, turn
 		}
 		if isDone {
 			//ticker.Stop()
