@@ -9,6 +9,7 @@ import (
 	"uk.ac.bris.cs/gameoflife/util"
 )
 
+//Parameters to send
 type Params struct {
 	Turns       int
 	Threads     int
@@ -68,7 +69,7 @@ func Run(p ClientParams, events chan Event, keyPresses chan rune) {
 		Alive:  aliveCells,
 		Params: engineParams,
 	}
-	towork := InitRequest{Params: &initParams, ShouldContinue: p.ShouldContinue}
+	towork := InitRequest{Params: &initParams, ShouldContinue: p.ShouldContinue, InboundIP: util.GetOutboundIP()}
 	//Call the broker
 	client.Call(Initialise, towork, &status)
 	go ticker(client, events, quit)
@@ -119,7 +120,7 @@ func ticker(client *rpc.Client, events chan Event, quit chan bool) {
 		select {
 		case <-ticker.C:
 			aliveReport := TickReport{}
-			client.Call(Report, ReportRequest{}, &aliveReport)
+			client.Call(Report, ReportRequest{InboundIP: util.GetOutboundIP()}, &aliveReport)
 			switch aliveReport.ReportType {
 			case Ticking:
 				events <- AliveCellsCount{CompletedTurns: aliveReport.Turns, CellsCount: aliveReport.CellsCount}
@@ -148,7 +149,7 @@ func keyboard(client *rpc.Client, keyPresses chan rune, events chan Event,
 		select {
 		case k := <-keyPresses:
 			fmt.Println("Received input: ", k)
-			request := KeyPressRequest{Key: k}
+			request := KeyPressRequest{Key: k, InboundIP: util.GetOutboundIP()}
 			keyPressReport := KeyPressReport{Alive: nil, Turns: 0}
 			client.Call(KeyPress, request, &keyPressReport)
 			fmt.Println("State:", keyPressReport.State.String())

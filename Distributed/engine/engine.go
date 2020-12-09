@@ -5,108 +5,187 @@ import (
 	"fmt"
 	"net"
 	"net/rpc"
-	"time"
 
 	"uk.ac.bris.cs/gameoflife/gol"
 )
 
 type Engine struct {
-	events             chan gol.Event
-	keyPresses         chan rune
-	keyPressEvents     chan gol.Event
-	tickerChan         chan bool
-	ticker             *time.Ticker
-	killChannel        chan bool
-	killConfirmChannel chan bool
-	gameRunning        bool
+	IPAddresses map[string](chan gol.Request)
+	workersBusy map[string]bool
+	IPLinks     map[string]string
+	ReportChans map[string](chan gol.BaseReport)
+}
+
+func (e *Engine) FindFreeWorker() string {
+	for k, v := range e.workersBusy {
+		if !v {
+			return k
+		}
+		fmt.Println("k = ", k, "v = ", v)
+	}
+	return ""
 }
 
 //Begin GoL execution
 func (e *Engine) Initialise(req gol.InitRequest, res *gol.StatusReport) (err error) {
-	params := req.Params
-	if req.ShouldContinue == 0 {
-		if e.gameRunning {
-			e.killChannel <- true
-			<-e.killConfirmChannel
-			//time.Sleep(1 * time.Second)
-			e.emptyChannels()
-		}
-		go gol.Distributor(params.Params, req.Params.Alive, e.events, e.keyPressEvents, e.keyPresses, e.tickerChan, e.killChannel, e.killConfirmChannel)
-		e.gameRunning = true
-	} else if req.ShouldContinue == 1 {
-		if !e.gameRunning {
-			fmt.Println("Error: no game running. Creating new game.")
+	fmt.Println("Entered Initialise")
+	if _, OK := e.IPLinks[req.InboundIP]; !OK {
+		fmt.Println("Finding free worker...")
+		e.IPLinks[req.InboundIP] = e.FindFreeWorker()
+	}
+	workerIP := e.IPLinks[req.InboundIP]
+	fmt.Println("Found worker. Sending req...")
+	fmt.Println("Worker ID: ", workerIP)
+	e.IPAddresses[workerIP] <- req
+	fmt.Println("Sent req")
+	e.workersBusy[workerIP] = true
+	/*
+		params := req.Params
+		if req.ShouldContinue == 0 {
+			if e.gameRunning {
+				e.killChannel <- true
+				<-e.killConfirmChannel
+				//time.Sleep(1 * time.Second)
+				e.emptyChannels()
+			}
 			go gol.Distributor(params.Params, req.Params.Alive, e.events, e.keyPressEvents, e.keyPresses, e.tickerChan, e.killChannel, e.killConfirmChannel)
 			e.gameRunning = true
+		} else if req.ShouldContinue == 1 {
+			if !e.gameRunning {
+				fmt.Println("Error: no game running. Creating new game.")
+				go gol.Distributor(params.Params, req.Params.Alive, e.events, e.keyPressEvents, e.keyPresses, e.tickerChan, e.killChannel, e.killConfirmChannel)
+				e.gameRunning = true
+			} else {
+				e.keyPresses <- 'r'
+			}
 		} else {
-			e.keyPresses <- 'r'
-		}
-	} else {
-		fmt.Println("Incorrect flag value for continue. Must be either 0 or 1.")
-	}
+			fmt.Println("Incorrect flag value for continue. Must be either 0 or 1.")
+		}*/
 	return err
 }
 
-func (e *Engine) emptyChannels() {
+func (e *Engine) subscriber_loop(client *rpc.Client, addr chan gol.Request, factoryAddr string) {
 	for {
-		if len(e.events) > 0 {
-			<-e.events
+		job := <-addr
+		var err error
+		switch j := job.(type) {
+		case gol.InitRequest:
+			fmt.Println("InitReq received")
+			response := new(gol.StatusReport)
+			err = client.Call("Factory.Initialise", j, &response)
+		case gol.ReportRequest:
+			fmt.Println("RepReq received")
+			response := gol.TickReport{}
+			err = client.Call("Factory.Report", j, &response)
+			e.ReportChans[factoryAddr] <- response
+			fmt.Println("Sent response")
+		case gol.KeyPressRequest:
+			fmt.Println("KeyPressReq received")
+			response := gol.KeyPressReport{}
+			err = client.Call("Factory.KeyPress", j, &response)
+			e.ReportChans[factoryAddr] <- response
 		}
-		if len(e.keyPresses) > 0 {
-			<-e.keyPresses
-		}
-		if len(e.keyPressEvents) > 0 {
-			<-e.keyPressEvents
-		}
-		if len(e.tickerChan) > 0 {
-			<-e.tickerChan
-		}
-		if len(e.killChannel) > 0 {
-			<-e.killChannel
-		}
-		if len(e.killConfirmChannel) > 0 {
-			<-e.killConfirmChannel
-		}
-		if len(e.events) == 0 && len(e.keyPresses) == 0 && len(e.keyPressEvents) == 0 && len(e.tickerChan) == 0 && len(e.killChannel) == 0 && len(e.killConfirmChannel) == 0 {
+		if err != nil {
+			fmt.Println("Error")
+			fmt.Println(err)
+			fmt.Println("Closing subscriber thread.")
+			//Place the unfulfilled job back on the topic channel.
 			break
 		}
 	}
 }
 
-func (e *Engine) Report(req gol.ReportRequest, res *gol.TickReport) (err error) {
-	e.tickerChan <- true
-	for {
-		select {
-		case event := <-e.events:
-			switch t := event.(type) {
-			case gol.AliveCellsCount:
-				(*res).CellsCount = t.CellsCount
-				(*res).Turns = t.CompletedTurns
-				(*res).ReportType = gol.Ticking
-				return err
-			case gol.FinalTurnComplete:
-				(*res).Alive = t.Alive
-				(*res).Turns = t.CompletedTurns
-				(*res).ReportType = gol.Finished
-				e.gameRunning = false
-				e.emptyChannels()
-				return err
+//The subscribe function registers a worker to the topic, creating an RPC client,
+//and will use the given callback string as the callback function whenever work
+//is available.
+func (e *Engine) subscribe(factoryAddress string) (err error) {
+	fmt.Println("Sub req passed on")
+	client, err := rpc.Dial("tcp", factoryAddress)
+	if err == nil {
+		fmt.Println("No errors. Proceeding...")
+		e.workersBusy[factoryAddress] = false
+		e.IPAddresses[factoryAddress] = make(chan gol.Request, 10)
+		e.ReportChans[factoryAddress] = make(chan gol.BaseReport, 10)
+		go e.subscriber_loop(client, e.IPAddresses[factoryAddress], factoryAddress)
+	} else {
+		fmt.Println("Error subscribing ", factoryAddress)
+		fmt.Println(err)
+		return err
+	}
+	return
+}
+
+func (e *Engine) Subscribe(req gol.Subscription, res *gol.StatusReport) (err error) {
+	fmt.Println("Sub req received")
+	err = e.subscribe(req.FactoryAddress)
+	if err != nil {
+		//res.Message = "Error during subscription"
+	}
+	return err
+}
+
+func (e *Engine) emptyChannels() {
+	/*
+		for {
+			if len(e.events) > 0 {
+				<-e.events
 			}
-		}
+			if len(e.keyPresses) > 0 {
+				<-e.keyPresses
+			}
+			if len(e.keyPressEvents) > 0 {
+				<-e.keyPressEvents
+			}
+			if len(e.tickerChan) > 0 {
+				<-e.tickerChan
+			}
+			if len(e.killChannel) > 0 {
+				<-e.killChannel
+			}
+			if len(e.killConfirmChannel) > 0 {
+				<-e.killConfirmChannel
+			}
+			if len(e.events) == 0 && len(e.keyPresses) == 0 && len(e.keyPressEvents) == 0 && len(e.tickerChan) == 0 && len(e.killChannel) == 0 && len(e.killConfirmChannel) == 0 {
+				break
+			}
+		}*/
+}
+
+func (e *Engine) Report(req gol.ReportRequest, res *gol.TickReport) (err error) {
+	inboundIP := req.InboundIP
+	workerIP := e.IPLinks[inboundIP]
+	e.IPAddresses[workerIP] <- req
+	report := <-e.ReportChans[workerIP]
+	fmt.Println("Received report from factory")
+	switch r := report.(type) {
+	case gol.TickReport:
+		fmt.Println("Completed turns = ", r.Turns)
+		(*res).Turns = r.Turns
+		(*res).Alive = r.Alive
+		(*res).CellsCount = r.CellsCount
+		(*res).ReportType = r.ReportType
+		break
+	default:
+		e.ReportChans[workerIP] <- report
 	}
 	return err
 }
 
 func (e *Engine) KeyPress(req gol.KeyPressRequest, res *gol.KeyPressReport) (err error) {
-	e.keyPresses <- req.Key
-	select {
-	case k := <-e.keyPressEvents:
-		switch t := k.(type) {
-		case gol.StateChange:
-			(*res).Alive = t.Alive
-			(*res).Turns = t.CompletedTurns
-			(*res).State = t.NewState
-		}
+	inboundIP := req.InboundIP
+	workerIP := e.IPLinks[inboundIP]
+	e.IPAddresses[workerIP] <- req
+	report := <-e.ReportChans[workerIP]
+	fmt.Println("Received report from factory")
+	switch r := report.(type) {
+	case gol.KeyPressReport:
+		fmt.Println("Completed turns = ", r.Turns)
+		(*res).Alive = r.Alive
+		(*res).Turns = r.Turns
+		(*res).State = r.State
+		break
+	default:
+		e.ReportChans[workerIP] <- report
 	}
 	return err
 }
@@ -115,8 +194,7 @@ func (e *Engine) KeyPress(req gol.KeyPressRequest, res *gol.KeyPressReport) (err
 func main() {
 	pAddr := flag.String("port", "8030", "Port to listen on")
 	flag.Parse()
-	rpc.Register(&Engine{make(chan gol.Event, 1000), make(chan rune, 10), make(chan gol.Event, 1000), make(chan bool, 10),
-		time.NewTicker(2 * time.Second), make(chan bool, 1), make(chan bool, 1), false})
+	rpc.Register(&Engine{make(map[string]chan gol.Request), make(map[string]bool), make(map[string]string), make(map[string]chan gol.BaseReport)})
 	listener, _ := net.Listen("tcp", ":"+*pAddr)
 	defer listener.Close()
 	rpc.Accept(listener)
