@@ -60,7 +60,7 @@ func Run(p ClientParams, events chan Event, keyPresses chan rune) {
 	//Dial broker address.
 	client, err := rpc.Dial("tcp", (p.BrokerAddr))
 	if err != nil {
-		fmt.Println("Error: Client returned nil.", err, p.BrokerAddr)
+		fmt.Println("Error: Client returned nil.", err)
 		os.Exit(2)
 	}
 	status := new(StatusReport)

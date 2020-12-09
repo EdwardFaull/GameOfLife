@@ -12,8 +12,8 @@ import (
 func TestGol(t *testing.T) {
 	tests := []gol.ClientParams{
 		{ImageWidth: 16, ImageHeight: 16},
-		{ImageWidth: 64, ImageHeight: 64},
-		{ImageWidth: 512, ImageHeight: 512},
+		//{ImageWidth: 64, ImageHeight: 64},
+		//{ImageWidth: 512, ImageHeight: 512},
 	}
 	for _, p := range tests {
 		//TODO: REPLACE 0 TURNS
@@ -40,6 +40,8 @@ func TestGol(t *testing.T) {
 							cells = e.Alive
 						}
 					}
+					fmt.Println("Expected: ", expectedAlive)
+					fmt.Println("Actual: ", cells)
 					assertEqualBoard(t, cells, expectedAlive, stdParams)
 				})
 			}
