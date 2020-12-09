@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"uk.ac.bris.cs/gameoflife/gol"
-	"uk.ac.bris.cs/gameoflife/stubs"
 )
 
 type Engine struct {
@@ -22,19 +21,21 @@ type Engine struct {
 }
 
 //Begin GoL execution
-func (e *Engine) Initialise(req stubs.InitRequest, res *stubs.StatusReport) (err error) {
+func (e *Engine) Initialise(req gol.InitRequest, res *gol.StatusReport) (err error) {
 	params := req.Params
 	if req.ShouldContinue == 0 {
 		if e.gameRunning {
 			e.killChannel <- true
+			//TODO: Block until game destroyed better
+			time.Sleep(1 * time.Second)
 			e.emptyChannels()
 		}
-		go gol.Run(params.Params, e.events, e.keyPresses, e.keyPressEvents, req.Params.Alive, e.tickerChan, e.killChannel)
+		go gol.Distributor(params.Params, req.Params.Alive, e.events, e.keyPressEvents, e.keyPresses, e.tickerChan, e.killChannel)
 		e.gameRunning = true
 	} else if req.ShouldContinue == 1 {
 		if !e.gameRunning {
 			fmt.Println("Error: no game running. Creating new game.")
-			go gol.Run(params.Params, e.events, e.keyPresses, e.keyPressEvents, req.Params.Alive, e.tickerChan, e.killChannel)
+			go gol.Distributor(params.Params, req.Params.Alive, e.events, e.keyPressEvents, e.keyPresses, e.tickerChan, e.killChannel)
 			e.gameRunning = true
 		} else {
 			e.keyPresses <- 'r'
@@ -47,7 +48,6 @@ func (e *Engine) Initialise(req stubs.InitRequest, res *stubs.StatusReport) (err
 
 func (e *Engine) emptyChannels() {
 	for {
-		fmt.Println("Emptying channels....")
 		if len(e.events) > 0 {
 			<-e.events
 		}
@@ -60,27 +60,30 @@ func (e *Engine) emptyChannels() {
 		if len(e.tickerChan) > 0 {
 			<-e.tickerChan
 		}
-		if len(e.events) == 0 && len(e.keyPresses) == 0 && len(e.keyPressEvents) == 0 && len(e.tickerChan) == 0 {
+		if len(e.killChannel) > 0 {
+			<-e.killChannel
+		}
+		if len(e.events) == 0 && len(e.keyPresses) == 0 && len(e.keyPressEvents) == 0 && len(e.tickerChan) == 0 && len(e.killChannel) == 0 {
 			break
 		}
 	}
 }
 
-func (e *Engine) Report(req stubs.ReportRequest, res *stubs.TickReport) (err error) {
+func (e *Engine) Report(req gol.ReportRequest, res *gol.TickReport) (err error) {
 	e.tickerChan <- true
 	for {
 		select {
 		case event := <-e.events:
 			switch t := event.(type) {
 			case gol.AliveCellsCount:
-				//fmt.Println("AliveCellsCount: Alive:", t.CellsCount, "   Turn:", t.CompletedTurns)
 				(*res).CellsCount = t.CellsCount
 				(*res).Turns = t.CompletedTurns
+				(*res).ReportType = gol.Ticking
 				return err
 			case gol.FinalTurnComplete:
-				//fmt.Println("FinalTurnComplete: Alive:", t.Alive, "   Turn:", t.CompletedTurns)
 				(*res).Alive = t.Alive
 				(*res).Turns = t.CompletedTurns
+				(*res).ReportType = gol.Finished
 				return err
 			}
 		}
@@ -88,8 +91,7 @@ func (e *Engine) Report(req stubs.ReportRequest, res *stubs.TickReport) (err err
 	return err
 }
 
-func (e *Engine) KeyPress(req stubs.KeyPressRequest, res *stubs.KeyPressReport) (err error) {
-	fmt.Println("Doing KeyPress")
+func (e *Engine) KeyPress(req gol.KeyPressRequest, res *gol.KeyPressReport) (err error) {
 	e.keyPresses <- req.Key
 	select {
 	case k := <-e.keyPressEvents:

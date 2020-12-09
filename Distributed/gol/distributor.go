@@ -17,12 +17,37 @@ type distributorChannels struct {
 	globalFiller         chan filler
 	turnFinishedChannels []chan int
 	ticker               <-chan bool
-	killChan             <-chan bool
-	workerKillChan       []chan<- bool
+	killChan             chan bool
+	workerKillChan       []chan bool
 }
 
 // distributor divides the work between workers and interacts with other goroutines.
-func distributor(p Params, c distributorChannels, world [][]byte) ([]util.Cell, int) {
+func Distributor(p Params, alive []util.Cell, events chan Event, keyPressEvents chan Event, keyPresses chan rune,
+	ticker chan bool, killChan chan bool) ([]util.Cell, int) {
+	world := make([][]byte, p.ImageHeight)
+	for i := range world {
+		world[i] = make([]byte, p.ImageWidth)
+	}
+	for _, c := range alive {
+		world[c.Y][c.X] = 255
+	}
+
+	workerEvents := make(chan Event, 1000)
+	globalFiller := make(chan filler, 10)
+
+	c := distributorChannels{
+		events:               events,
+		keyPressEvents:       keyPressEvents,
+		keyPresses:           keyPresses,
+		workerEvents:         workerEvents,
+		workerKeyPresses:     make([]chan rune, p.Threads),
+		fillers:              make([]chan filler, p.Threads),
+		globalFiller:         globalFiller,
+		turnFinishedChannels: make([]chan int, p.Threads),
+		ticker:               ticker,
+		killChan:             killChan,
+		workerKillChan:       make([]chan bool, p.Threads),
+	}
 
 	fmt.Println("Began new GoL")
 	//TODO: Initialise semaphores for locking finished workers
@@ -37,7 +62,7 @@ func distributor(p Params, c distributorChannels, world [][]byte) ([]util.Cell, 
 		}
 		startY := int(float32(t) * threadHeight)
 
-		fillerElement := make(chan filler, p.Threads)
+		fillerElement := make(chan filler, 10)
 		c.fillers[t] = fillerElement
 
 		finishedChannel := make(chan int)
@@ -57,14 +82,13 @@ func distributor(p Params, c distributorChannels, world [][]byte) ([]util.Cell, 
 			Turns:       p.Turns,
 		}
 		workerChannels := workerChannels{
-			events:          c.workerEvents,
-			globalFiller:    c.globalFiller,
+			events:          workerEvents,
+			globalFiller:    globalFiller,
 			workerFiller:    fillerElement,
 			finishedChannel: finishedChannel,
 			keyPresses:      keyPress,
 			killChan:        killChan,
 		}
-		//fmt.Println("Created new worker")
 		go worker(world[startY:endY], workerParams, workerChannels, t)
 	}
 
@@ -86,7 +110,6 @@ func sendLinesToWorker(p Params, f filler, c distributorChannels) {
 	}
 	c.fillers[upperWorker] <- filler{lowerLine: nil, upperLine: f.upperLine, workerID: worker}
 	c.fillers[lowerWorker] <- filler{lowerLine: f.lowerLine, upperLine: nil, workerID: worker}
-	//fmt.Println("Lines sent to worker from distributor")
 }
 
 func handleChannels(p Params, c distributorChannels) ([]util.Cell, int) {
@@ -135,17 +158,13 @@ func handleChannels(p Params, c distributorChannels) ([]util.Cell, int) {
 				}
 				isPaused = !isPaused
 				if isPaused {
-					fmt.Println("Line 138 pause event at turn", turn)
 					c.keyPressEvents <- StateChange{turn, Paused, prevTurnAliveCells}
 				} else {
-					fmt.Println("Line 141 execute event at turn", turn)
 					c.keyPressEvents <- StateChange{turn, Executing, nil}
 				}
 			case 's':
-				fmt.Println("Line 145 save event at turn", turn)
 				c.keyPressEvents <- StateChange{turn, Saving, prevTurnAliveCells}
 			case 'q':
-				fmt.Println("Line 148 quit event at turn", turn)
 				c.keyPressEvents <- StateChange{turn, Quitting, prevTurnAliveCells}
 				for _, kp := range c.workerKeyPresses {
 					kp <- k

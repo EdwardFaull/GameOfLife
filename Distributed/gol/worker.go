@@ -1,8 +1,6 @@
 package gol
 
 import (
-	"fmt"
-
 	"uk.ac.bris.cs/gameoflife/util"
 )
 
@@ -21,7 +19,7 @@ type workerChannels struct {
 	workerFiller      <-chan filler
 	finishedChannel   <-chan int
 	keyPresses        <-chan rune
-	killChan          <-chan bool
+	killChan          chan bool
 }
 
 //Used to send the top and bottom arrays of each worker's world to the distributor,
@@ -47,13 +45,16 @@ func worker(world [][]byte, p workerParams, c workerChannels, workerID int) ([][
 	}
 
 	turn := 0
-	aliveCells := []util.Cell{}
+	aliveCells := calculateAliveCells(p, world, workerID)
 
 	//Executes all turns of the Game of Life.
 	for {
 		//TODO: Semaphores
 		//Send top and bottom arrays to distributor
 		if !isPaused {
+			if turn >= p.Turns {
+				break
+			}
 			aliveCells = []util.Cell{}
 			c.globalFiller <- filler{lowerLine: world[0], upperLine: world[p.ImageHeight-1], workerID: workerID}
 			//Receive lines outside world's boundaries for use in this worker
@@ -85,10 +86,7 @@ func worker(world [][]byte, p workerParams, c workerChannels, workerID int) ([][
 					break
 				}
 			}
-			//turn++
-			if turn == p.Turns {
-				break
-			}
+			turn++
 		}
 		select {
 		case k := <-c.keyPresses:
@@ -100,12 +98,10 @@ func worker(world [][]byte, p workerParams, c workerChannels, workerID int) ([][
 			case 'q':
 				c.events <- WorkerSaveImage{CompletedTurns: turn, Alive: aliveCells}
 				isPaused = true
-				//return world, turn
 			case 'r':
 				isPaused = false
 			}
 		case <-c.killChan:
-			fmt.Println("Destroyed worker")
 			return world, turn
 		default:
 		}

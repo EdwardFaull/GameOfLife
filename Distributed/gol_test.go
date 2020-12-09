@@ -10,12 +10,13 @@ import (
 
 // TestGol tests 16x16, 64x64 and 512x512 images on 0, 1 and 100 turns using 1-16 worker threads.
 func TestGol(t *testing.T) {
-	tests := []gol.Params{
+	tests := []gol.ClientParams{
 		{ImageWidth: 16, ImageHeight: 16},
 		{ImageWidth: 64, ImageHeight: 64},
 		{ImageWidth: 512, ImageHeight: 512},
 	}
 	for _, p := range tests {
+		//TODO: REPLACE 0 TURNS
 		for _, turns := range []int{0, 1, 100} {
 			p.Turns = turns
 			expectedAlive := util.ReadAliveCells(
@@ -25,6 +26,9 @@ func TestGol(t *testing.T) {
 			)
 			for threads := 1; threads <= 16; threads++ {
 				p.Threads = threads
+				p.ShouldContinue = 0
+				p.BrokerAddr = "192.168.0.12:8030"
+				stdParams := gol.ClientToEngineParams(p)
 				testName := fmt.Sprintf("%dx%dx%d-%d", p.ImageWidth, p.ImageHeight, p.Turns, p.Threads)
 				t.Run(testName, func(t *testing.T) {
 					events := make(chan gol.Event)
@@ -36,7 +40,7 @@ func TestGol(t *testing.T) {
 							cells = e.Alive
 						}
 					}
-					assertEqualBoard(t, cells, expectedAlive, p)
+					assertEqualBoard(t, cells, expectedAlive, stdParams)
 				})
 			}
 		}

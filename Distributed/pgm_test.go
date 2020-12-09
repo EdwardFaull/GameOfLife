@@ -3,13 +3,14 @@ package main
 import (
 	"fmt"
 	"testing"
+
 	"uk.ac.bris.cs/gameoflife/gol"
 	"uk.ac.bris.cs/gameoflife/util"
 )
 
 // Pgm tests 16x16, 64x64 and 512x512 image output files on 0, 1 and 100 turns using 1-16 worker threads.
 func TestPgm(t *testing.T) {
-	tests := []gol.Params{
+	tests := []gol.ClientParams{
 		{ImageWidth: 16, ImageHeight: 16},
 		{ImageWidth: 64, ImageHeight: 64},
 		{ImageWidth: 512, ImageHeight: 512},
@@ -35,7 +36,7 @@ func TestPgm(t *testing.T) {
 						p.ImageWidth,
 						p.ImageHeight,
 					)
-					assertEqualBoard(t, cellsFromImage, expectedAlive, p)
+					assertEqualBoard(t, cellsFromImage, expectedAlive, gol.ClientToEngineParams(p))
 				})
 			}
 		}
