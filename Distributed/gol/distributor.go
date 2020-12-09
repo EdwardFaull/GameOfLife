@@ -17,13 +17,14 @@ type distributorChannels struct {
 	globalFiller         chan filler
 	turnFinishedChannels []chan int
 	ticker               <-chan bool
-	killChan             chan bool
+	killChan             <-chan bool
+	killConfirmChan      chan<- bool
 	workerKillChan       []chan bool
 }
 
 // distributor divides the work between workers and interacts with other goroutines.
 func Distributor(p Params, alive []util.Cell, events chan Event, keyPressEvents chan Event, keyPresses chan rune,
-	ticker chan bool, killChan chan bool) ([]util.Cell, int) {
+	ticker chan bool, killChan <-chan bool, killConfirmChan chan<- bool) ([]util.Cell, int) {
 	world := make([][]byte, p.ImageHeight)
 	for i := range world {
 		world[i] = make([]byte, p.ImageWidth)
@@ -46,6 +47,7 @@ func Distributor(p Params, alive []util.Cell, events chan Event, keyPressEvents 
 		turnFinishedChannels: make([]chan int, p.Threads),
 		ticker:               ticker,
 		killChan:             killChan,
+		killConfirmChan:      killConfirmChan,
 		workerKillChan:       make([]chan bool, p.Threads),
 	}
 
@@ -182,7 +184,7 @@ func handleChannels(p Params, c distributorChannels) ([]util.Cell, int) {
 			for _, e := range c.workerKillChan {
 				e <- true
 			}
-			fmt.Println("Destroying distributor")
+			c.killConfirmChan <- true
 			return aliveCells, turn
 		}
 		if isDone {

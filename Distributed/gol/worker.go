@@ -52,7 +52,7 @@ func worker(world [][]byte, p workerParams, c workerChannels, workerID int) ([][
 		//TODO: Semaphores
 		//Send top and bottom arrays to distributor
 		if !isPaused {
-			if turn >= p.Turns {
+			if turn > p.Turns || (turn == 0 && p.Turns == 0) {
 				break
 			}
 			aliveCells = []util.Cell{}
