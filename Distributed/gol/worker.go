@@ -1,8 +1,6 @@
 package gol
 
 import (
-	"fmt"
-
 	"uk.ac.bris.cs/gameoflife/util"
 )
 
@@ -12,31 +10,41 @@ type workerParams struct {
 	ImageWidth  int
 	ImageHeight int
 	Turns       int
+	Threads     int
 }
 
 type workerChannels struct {
 	events            chan<- Event
 	distributorEvents <-chan Event
-	globalFiller      chan<- filler
-	workerFiller      <-chan filler
+	globalFiller      chan<- Filler
+	workerFiller      <-chan Filler
 	finishedChannel   <-chan int
 	keyPresses        <-chan rune
 	killChan          chan bool
+	fetchRequest      chan<- bool
+	fetchResponse     <-chan []byte
 }
 
 //Used to send the top and bottom arrays of each worker's world to the distributor,
 //as well as receive them from it
-type filler struct {
+type Filler struct {
 	lowerLine []byte
 	upperLine []byte
 	workerID  int
+}
+
+func (f *Filler) GetLowerLine() []byte {
+	return f.lowerLine
+}
+func (f *Filler) GetUpperLine() []byte {
+	return f.upperLine
 }
 
 func worker(world [][]byte, p workerParams, c workerChannels, workerID int) ([][]byte, int) {
 
 	isPaused := false
 	//For all initially alive cells send a CellFlipped Event.
-	for y, elem := range world {
+	/*for y, elem := range world {
 		for x, cell := range elem {
 			if cell == 255 {
 				d := util.Cell{X: x, Y: y + p.StartY}
@@ -45,49 +53,23 @@ func worker(world [][]byte, p workerParams, c workerChannels, workerID int) ([][
 			}
 		}
 	}
-
+	*/
 	turn := 0
 	aliveCells := calculateAliveCells(p, world, workerID)
 
 	//Executes all turns of the Game of Life.
 	for {
-		//TODO: Semaphores
 		//Send top and bottom arrays to distributor
 		if !isPaused {
 			if turn > p.Turns || (turn == 0 && p.Turns == 0) {
 				break
 			}
 			aliveCells = []util.Cell{}
-			c.globalFiller <- filler{lowerLine: world[0], upperLine: world[p.ImageHeight-1], workerID: workerID}
-			//Receive lines outside world's boundaries for use in this worker
-			receivedFiller := <-c.workerFiller
-			receivedFiller2 := <-c.workerFiller
-			//Decide which filler delivered which line
-			upperLine := []byte{}
-			lowerLine := []byte{}
-			if receivedFiller.upperLine != nil {
-				upperLine = receivedFiller.upperLine
-				lowerLine = receivedFiller2.lowerLine
-			} else {
-				upperLine = receivedFiller2.upperLine
-				lowerLine = receivedFiller.lowerLine
-			}
+			upperLine, lowerLine := getFillers(p, c, world, workerID)
 			//Execute turn of game
 			world, aliveCells = calculateNextState(workerID, p, world, c, turn, upperLine, lowerLine)
 			//Send completion event to distributor
 			c.events <- WorkerTurnComplete{CompletedTurns: turn, Alive: aliveCells}
-			fmt.Println("Worker", workerID, "completed turn", turn)
-			canContinue := false
-			for {
-				select {
-				case x := <-c.finishedChannel:
-					turn = x
-					canContinue = true
-				}
-				if canContinue {
-					break
-				}
-			}
 			turn++
 		}
 		select {
@@ -102,16 +84,54 @@ func worker(world [][]byte, p workerParams, c workerChannels, workerID int) ([][
 				isPaused = true
 			case 'r':
 				isPaused = false
-			case 'k':
-				return world, turn
 			}
 		case <-c.killChan:
 			return world, turn
-		default:
+		case x := <-c.finishedChannel:
+			turn = x
 		}
 	}
 	c.events <- WorkerFinalTurnComplete{CompletedTurns: turn, Alive: aliveCells}
 	return world, turn
+}
+
+func getFillers(p workerParams, c workerChannels, world [][]byte, workerID int) ([]byte, []byte) {
+	c.globalFiller <- Filler{lowerLine: world[0], upperLine: world[p.ImageHeight-1], workerID: workerID}
+
+	upperLine := []byte{}
+	lowerLine := []byte{}
+	if workerID == 0 || workerID == p.Threads-1 {
+		c.fetchRequest <- true
+		filler := <-c.fetchResponse
+		if workerID == 0 {
+			upperLine = filler
+			receivedFiller := <-c.workerFiller
+			if p.Threads != 1 {
+				lowerLine = receivedFiller.lowerLine
+			}
+		}
+		if workerID == p.Threads-1 {
+			lowerLine = filler
+			receivedFiller := <-c.workerFiller
+			if p.Threads != 1 {
+				upperLine = receivedFiller.upperLine
+			}
+		}
+	} else {
+		//Receive lines outside world's boundaries for use in this worker
+		receivedFiller := <-c.workerFiller
+		receivedFiller2 := <-c.workerFiller
+		upperID := (workerID + 1) % p.Threads
+		//Decide which filler delivered which line
+		if receivedFiller.workerID != upperID {
+			upperLine = receivedFiller.upperLine
+			lowerLine = receivedFiller2.lowerLine
+		} else {
+			upperLine = receivedFiller2.upperLine
+			lowerLine = receivedFiller.lowerLine
+		}
+	}
+	return upperLine, lowerLine
 }
 
 func createNewWorld(world [][]byte, p workerParams) [][]byte {

@@ -27,7 +27,8 @@ func TestGol(t *testing.T) {
 			for threads := 1; threads <= 16; threads++ {
 				p.Threads = threads
 				p.ShouldContinue = 0
-				p.BrokerAddr = "192.168.0.12:8030"
+				p.Factories = 2
+				p.BrokerAddr = "192.168.0.2:8030"
 				stdParams := gol.ClientToEngineParams(p)
 				testName := fmt.Sprintf("%dx%dx%d-%d", p.ImageWidth, p.ImageHeight, p.Turns, p.Threads)
 				t.Run(testName, func(t *testing.T) {
@@ -40,8 +41,6 @@ func TestGol(t *testing.T) {
 							cells = e.Alive
 						}
 					}
-					fmt.Println("Expected: ", expectedAlive)
-					fmt.Println("Actual: ", cells)
 					assertEqualBoard(t, cells, expectedAlive, stdParams)
 				})
 			}

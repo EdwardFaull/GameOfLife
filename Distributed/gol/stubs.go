@@ -4,14 +4,13 @@ import (
 	"uk.ac.bris.cs/gameoflife/util"
 )
 
-var CreateChannel = "Engine.CreateChannel"
-var Publish = "Engine.Publish"
 var Subscribe = "Engine.Subscribe"
-var ReturnAlive = "Engine.ReturnAlive"
 var Initialise = "Engine.Initialise"
 var Report = "Engine.Report"
 var Tick = "Engine.Tick"
 var KeyPress = "Engine.KeyPress"
+var Kill = "Factory.Kill"
+var Fetch = "Factory.Fetch"
 
 type Request interface {
 }
@@ -19,37 +18,23 @@ type Request interface {
 type BaseReport interface {
 }
 
-type InitParams struct {
-	Alive  []util.Cell
-	Params Params
-}
-
 //Structure used by controller to send initial GoL parameters
 //to server. Contains initially alive cells, image dimensions
 //and turns to be executed
 type InitRequest struct {
-	Params         *InitParams
+	Alive          []util.Cell
+	Params         Params
 	ShouldContinue int
 	InboundIP      string
+	Workers        int
+	UpperIP        string
+	LowerIP        string
+	StartY         int
 }
 
-/*
-type ChannelRequest struct {
-	Topic  string
-	Buffer int
-}
-*/
 type Subscription struct {
 	FactoryAddress string
-	Callback       string
 }
-
-/*
-type JobReport struct {
-	Alive []util.Cell
-	Turns int
-}
-*/
 
 type TickReport struct {
 	Turns      int
@@ -74,9 +59,22 @@ type KeyPressRequest struct {
 	InboundIP string
 }
 
+type KillRequest struct {
+}
+
 type KeyPressReport struct {
 	Alive      []util.Cell
 	Turns      int
 	State      State
 	OutboundIP string
+}
+
+//True if upper
+//False if lower
+type FetchRequest struct {
+	UpperOrLower bool
+}
+
+type FetchReport struct {
+	Line []byte
 }

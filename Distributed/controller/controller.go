@@ -37,6 +37,12 @@ func main() {
 		"Specify the number of turns to process. Defaults to 10000000000.")
 
 	flag.IntVar(
+		&params.Factories,
+		"factories",
+		2,
+		"Specify the number of turns to process. Defaults to 10000000000.")
+
+	flag.IntVar(
 		&params.ShouldContinue,
 		"c",
 		0,

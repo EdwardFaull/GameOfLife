@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/rpc"
 	"os"
+	"sync"
 	"time"
 
 	"uk.ac.bris.cs/gameoflife/util"
@@ -24,6 +25,7 @@ type ClientParams struct {
 	ImageHeight    int
 	BrokerAddr     string
 	ShouldContinue int
+	Factories      int
 }
 
 type controllerChannels struct {
@@ -58,6 +60,7 @@ func Run(p ClientParams, events chan Event, keyPresses chan rune) {
 	engineParams := ClientToEngineParams(p)
 	controllerChannels := makeIO(engineParams)
 	aliveCells := readImage(engineParams, controllerChannels)
+	mutex := &sync.Mutex{}
 
 	//Dial broker address.
 	client, err := rpc.Dial("tcp", (p.BrokerAddr))
@@ -66,16 +69,18 @@ func Run(p ClientParams, events chan Event, keyPresses chan rune) {
 		os.Exit(2)
 	}
 	status := new(StatusReport)
-	initParams := InitParams{
-		Alive:  aliveCells,
-		Params: engineParams,
+	towork := InitRequest{
+		Alive:          aliveCells,
+		Params:         engineParams,
+		ShouldContinue: p.ShouldContinue,
+		InboundIP:      util.GetOutboundIP(),
+		Workers:        p.Factories,
 	}
-	towork := InitRequest{Params: &initParams, ShouldContinue: p.ShouldContinue, InboundIP: util.GetOutboundIP()}
 	//Call the broker
 	client.Call(Initialise, towork, &status)
-	go updateImage(events, aliveCellsChan)
-	go ticker(client, events, quit, aliveCellsChan)
-	go keyboard(client, keyPresses, events, engineParams, controllerChannels, quit, aliveCellsChan)
+	go updateImage(events, aliveCellsChan, mutex)
+	go ticker(client, events, quit, aliveCellsChan, mutex)
+	go keyboard(client, keyPresses, events, engineParams, controllerChannels, quit, aliveCellsChan, mutex)
 }
 
 func readImage(p Params, c controllerChannels) []util.Cell {
@@ -114,11 +119,10 @@ func readImage(p Params, c controllerChannels) []util.Cell {
 	return aliveCells
 }
 
-func ticker(client *rpc.Client, events chan Event, quit chan bool, aliveCellsChan chan<- []util.Cell) {
-	ticker := time.NewTicker(2000 * time.Millisecond)
+func ticker(client *rpc.Client, events chan Event, quit chan bool, aliveCellsChan chan<- []util.Cell, mutex *sync.Mutex) {
+	ticker := time.NewTicker(100 * time.Millisecond)
 	isDone := false
 	for {
-		fmt.Println("Ticking...")
 		select {
 		case <-ticker.C:
 			aliveReport := TickReport{}
@@ -130,7 +134,9 @@ func ticker(client *rpc.Client, events chan Event, quit chan bool, aliveCellsCha
 			case Finished:
 				events <- FinalTurnComplete{CompletedTurns: aliveReport.Turns, Alive: aliveReport.Alive}
 				events <- StateChange{aliveReport.Turns, Quitting, nil}
+				mutex.Lock()
 				close(events)
+				mutex.Unlock()
 				isDone = true
 			}
 			if isDone {
@@ -145,20 +151,15 @@ func ticker(client *rpc.Client, events chan Event, quit chan bool, aliveCellsCha
 }
 
 func keyboard(client *rpc.Client, keyPresses chan rune, events chan Event,
-	p Params, c controllerChannels, quit chan bool, aliveCellsChan chan<- []util.Cell) {
-	previousAliveCells := []util.Cell{}
+	p Params, c controllerChannels, quit chan bool, aliveCellsChan chan<- []util.Cell, mutex *sync.Mutex) {
 	isDone := false
-	//isPaused := false
 	for {
 		select {
 		case k := <-keyPresses:
-			fmt.Println("Received input: ", k)
 			request := KeyPressRequest{Key: k, InboundIP: util.GetOutboundIP()}
 			keyPressReport := KeyPressReport{Alive: nil, Turns: 0}
 			client.Call(KeyPress, request, &keyPressReport)
-			fmt.Println("State:", keyPressReport.State.String())
 			if keyPressReport.State != Saving {
-				fmt.Println("Sending statechange event")
 				events <- StateChange{
 					CompletedTurns: keyPressReport.Turns,
 					Alive:          keyPressReport.Alive,
@@ -166,28 +167,25 @@ func keyboard(client *rpc.Client, keyPresses chan rune, events chan Event,
 			}
 			switch k {
 			case 'p':
-				for _, cell := range previousAliveCells {
-					events <- CellFlipped{CompletedTurns: keyPressReport.Turns, Cell: cell}
-				}
-				for _, cell := range keyPressReport.Alive {
-					events <- CellFlipped{CompletedTurns: keyPressReport.Turns, Cell: cell}
-				}
-				events <- TurnComplete{CompletedTurns: 0}
-				previousAliveCells = keyPressReport.Alive
+				aliveCellsChan <- keyPressReport.Alive
 			case 's':
 				outputImage(p, c, keyPressReport.Alive, keyPressReport.Turns)
 			case 'q':
 				outputImage(p, c, keyPressReport.Alive, keyPressReport.Turns)
 				c.command <- ioCheckIdle
 				<-c.ioIdle
+				mutex.Lock()
 				close(events)
+				mutex.Unlock()
 				isDone = true
 				quit <- true
 			case 'k':
 				outputImage(p, c, keyPressReport.Alive, keyPressReport.Turns)
 				c.command <- ioCheckIdle
 				<-c.ioIdle
+				mutex.Lock()
 				close(events)
+				mutex.Unlock()
 				isDone = true
 				quit <- true
 			}
@@ -200,10 +198,11 @@ func keyboard(client *rpc.Client, keyPresses chan rune, events chan Event,
 	}
 }
 
-func updateImage(events chan<- Event, aliveCellsChan <-chan []util.Cell) {
+func updateImage(events chan<- Event, aliveCellsChan <-chan []util.Cell, mutex *sync.Mutex) {
 	previousAliveCells := []util.Cell{}
 	for {
 		newAliveCells := <-aliveCellsChan
+		mutex.Lock()
 		for _, cell := range previousAliveCells {
 			events <- CellFlipped{CompletedTurns: 0, Cell: cell}
 		}
@@ -212,6 +211,7 @@ func updateImage(events chan<- Event, aliveCellsChan <-chan []util.Cell) {
 		}
 		events <- TurnComplete{CompletedTurns: 0}
 		previousAliveCells = newAliveCells
+		mutex.Unlock()
 	}
 }
 

@@ -6,40 +6,78 @@ import (
 	"net"
 	"net/rpc"
 	"os"
+	"time"
 
 	"uk.ac.bris.cs/gameoflife/gol"
+	"uk.ac.bris.cs/gameoflife/util"
 )
 
 type Engine struct {
 	IPAddresses map[string](chan gol.Request)
 	workersBusy map[string]bool
-	IPLinks     map[string]string
+	IPLinks     map[string][]string
 	ReportChans map[string](chan gol.BaseReport)
 }
 
-func (e *Engine) FindFreeWorker() string {
+func (e *Engine) FindFreeWorker(limit int) []string {
+	workers := []string{}
 	for k, v := range e.workersBusy {
 		fmt.Println("k = ", k, "v = ", v)
 		if !v {
-			return k
+			e.workersBusy[k] = true
+			workers = append(workers, k)
 		}
 	}
-	return ""
+	return workers
 }
 
 //Begin GoL execution
 func (e *Engine) Initialise(req gol.InitRequest, res *gol.StatusReport) (err error) {
-	fmt.Println("Entered Initialise")
+	workerIPs := []string{}
 	if _, OK := e.IPLinks[req.InboundIP]; !OK {
-		fmt.Println("Finding free worker...")
-		e.IPLinks[req.InboundIP] = e.FindFreeWorker()
+		workerIPs = e.FindFreeWorker(req.Workers)
+		e.IPLinks[req.InboundIP] = workerIPs
 	}
-	workerIP := e.IPLinks[req.InboundIP]
-	fmt.Println("Found worker. Sending req...")
-	fmt.Println("Worker ID: ", workerIP)
-	e.IPAddresses[workerIP] <- req
-	fmt.Println("Sent req")
-	e.workersBusy[workerIP] = true
+	workerIPs = e.IPLinks[req.InboundIP]
+	req.Workers = len(workerIPs)
+	for i, workerIP := range workerIPs {
+		offset := 0
+		if i == req.Workers-1 {
+			offset = req.Params.ImageHeight % req.Workers
+		}
+		lowerIP := ""
+		if i == 0 {
+			lowerIP = workerIPs[req.Workers-1]
+		} else {
+			lowerIP = workerIPs[i-1]
+		}
+		upperIP := workerIPs[(i+1)%req.Workers]
+
+		parameters := gol.Params{
+			ImageWidth:  req.Params.ImageWidth,
+			ImageHeight: req.Params.ImageHeight/req.Workers + offset,
+			Turns:       req.Params.Turns,
+			Threads:     req.Params.Threads,
+		}
+		alive := []util.Cell{}
+
+		for _, c := range req.Alive {
+			if i*(req.Params.ImageHeight/req.Workers) <= c.Y && c.Y < (i+1)*(req.Params.ImageHeight/req.Workers) {
+				alive = append(alive, c)
+			}
+		}
+		workerRequest := gol.InitRequest{
+			Params:         parameters,
+			ShouldContinue: req.ShouldContinue,
+			InboundIP:      req.InboundIP,
+			Workers:        req.Workers,
+			Alive:          alive,
+			UpperIP:        upperIP,
+			LowerIP:        lowerIP,
+			StartY:         i * (req.Params.ImageHeight / req.Workers),
+		}
+		e.IPAddresses[workerIP] <- workerRequest
+	}
 	return err
 }
 
@@ -49,7 +87,7 @@ func (e *Engine) subscriber_loop(client *rpc.Client, addr chan gol.Request, fact
 		var err error
 		switch j := job.(type) {
 		case gol.InitRequest:
-			response := new(gol.StatusReport)
+			response := gol.StatusReport{}
 			err = client.Call("Factory.Initialise", j, &response)
 		case gol.ReportRequest:
 			response := gol.TickReport{}
@@ -59,6 +97,9 @@ func (e *Engine) subscriber_loop(client *rpc.Client, addr chan gol.Request, fact
 			response := gol.KeyPressReport{}
 			err = client.Call("Factory.KeyPress", j, &response)
 			e.ReportChans[factoryAddr] <- response
+		case gol.KillRequest:
+			response := gol.StatusReport{}
+			err = client.Call(gol.Kill, j, &response)
 		}
 		if err != nil {
 			fmt.Println("Error")
@@ -99,54 +140,70 @@ func (e *Engine) Subscribe(req gol.Subscription, res *gol.StatusReport) (err err
 
 func (e *Engine) Report(req gol.ReportRequest, res *gol.TickReport) (err error) {
 	inboundIP := req.InboundIP
-	workerIP := e.IPLinks[inboundIP]
-	e.IPAddresses[workerIP] <- req
-	report := <-e.ReportChans[workerIP]
-	switch r := report.(type) {
-	case gol.TickReport:
-		fmt.Println("Completed turns = ", r.Turns)
-		(*res).Turns = r.Turns
-		(*res).Alive = r.Alive
-		(*res).CellsCount = r.CellsCount
-		(*res).ReportType = r.ReportType
-		if r.ReportType == gol.Finished {
-			workerIP := e.IPLinks[req.InboundIP]
-			e.workersBusy[workerIP] = false
+	workerIPs := e.IPLinks[inboundIP]
+	(*res).CellsCount = 0
+	(*res).Alive = []util.Cell{}
+	for _, ip := range workerIPs {
+		e.IPAddresses[ip] <- req
+		report := <-e.ReportChans[ip]
+		switch r := report.(type) {
+		case gol.TickReport:
+			(*res).Turns = r.Turns
+			(*res).Alive = append((*res).Alive, r.Alive...)
+			(*res).CellsCount += r.CellsCount
+			(*res).ReportType = r.ReportType
+			if r.ReportType == gol.Finished {
+				e.workersBusy[ip] = false
+			}
+			break
+		default:
+			e.ReportChans[ip] <- report
 		}
-		break
-	default:
-		e.ReportChans[workerIP] <- report
 	}
+
+	return err
+}
+
+func (e *Engine) Kill(req gol.KillRequest, res *gol.StatusReport) (err error) {
+	os.Exit(1)
 	return err
 }
 
 func (e *Engine) KeyPress(req gol.KeyPressRequest, res *gol.KeyPressReport) (err error) {
 	inboundIP := req.InboundIP
-	workerIP := e.IPLinks[inboundIP]
-	e.IPAddresses[workerIP] <- req
-	report := <-e.ReportChans[workerIP]
-	fmt.Println("Received report from factory")
-	switch r := report.(type) {
-	case gol.KeyPressReport:
-		fmt.Println("Completed turns = ", r.Turns)
-		(*res).Alive = r.Alive
-		(*res).Turns = r.Turns
-		(*res).State = r.State
-		break
-	default:
-		e.ReportChans[workerIP] <- report
+	workerIPs := e.IPLinks[inboundIP]
+	for _, workerIP := range workerIPs {
+		e.IPAddresses[workerIP] <- req
+		report := <-e.ReportChans[workerIP]
+		switch r := report.(type) {
+		case gol.KeyPressReport:
+			(*res).Alive = append((*res).Alive, r.Alive...)
+			(*res).Turns = r.Turns
+			(*res).State = r.State
+			break
+		default:
+			e.ReportChans[workerIP] <- report
+		}
 	}
 	if req.Key == 'k' {
-		os.Exit(1)
+		for _, ch := range e.IPAddresses {
+			ch <- gol.KillRequest{}
+		}
+		go killEngine()
 	}
 	return err
+}
+
+func killEngine() {
+	time.Sleep(1 * time.Second)
+	os.Exit(1)
 }
 
 // main is the function called when starting Game of Life with 'go run .'
 func main() {
 	pAddr := flag.String("port", "8030", "Port to listen on")
 	flag.Parse()
-	rpc.Register(&Engine{make(map[string]chan gol.Request), make(map[string]bool), make(map[string]string), make(map[string]chan gol.BaseReport)})
+	rpc.Register(&Engine{make(map[string]chan gol.Request), make(map[string]bool), make(map[string][]string), make(map[string]chan gol.BaseReport)})
 	listener, _ := net.Listen("tcp", ":"+*pAddr)
 	defer listener.Close()
 	rpc.Accept(listener)
