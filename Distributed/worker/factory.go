@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/rpc"
+	"os"
 
 	"uk.ac.bris.cs/gameoflife/gol"
 	"uk.ac.bris.cs/gameoflife/util"
@@ -109,6 +110,9 @@ func (f *Factory) KeyPress(req gol.KeyPressRequest, res *gol.KeyPressReport) (er
 			(*res).Turns = t.CompletedTurns
 			(*res).State = t.NewState
 		}
+	}
+	if req.Key == 'k' {
+		os.Exit(1)
 	}
 	return err
 }

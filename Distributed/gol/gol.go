@@ -183,6 +183,13 @@ func keyboard(client *rpc.Client, keyPresses chan rune, events chan Event,
 				close(events)
 				isDone = true
 				quit <- true
+			case 'k':
+				outputImage(p, c, keyPressReport.Alive, keyPressReport.Turns)
+				c.command <- ioCheckIdle
+				<-c.ioIdle
+				close(events)
+				isDone = true
+				quit <- true
 			}
 		case <-quit:
 			isDone = true

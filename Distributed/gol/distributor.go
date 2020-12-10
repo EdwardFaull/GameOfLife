@@ -95,10 +95,9 @@ func Distributor(p Params, alive []util.Cell, events chan Event, keyPressEvents 
 	}
 
 	aliveCells, turn := handleChannels(p, c)
-	// Make sure that the Io has finished any output before exiting.
-	//c.events <- StateChange{turn, Quitting}
+
 	// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
-	//close(c.events)
+	close(c.events)
 
 	return aliveCells, turn
 }
@@ -179,6 +178,11 @@ func handleChannels(p Params, c distributorChannels) ([]util.Cell, int) {
 					kp <- k
 				}
 				isPaused = false
+			case 'k':
+				for _, kp := range c.workerKeyPresses {
+					kp <- k
+				}
+				return aliveCells, turn
 			}
 		case <-c.ticker:
 			fmt.Println("Sent update to channel")

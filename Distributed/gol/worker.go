@@ -102,6 +102,8 @@ func worker(world [][]byte, p workerParams, c workerChannels, workerID int) ([][
 				isPaused = true
 			case 'r':
 				isPaused = false
+			case 'k':
+				return world, turn
 			}
 		case <-c.killChan:
 			return world, turn

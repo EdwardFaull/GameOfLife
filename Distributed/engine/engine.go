@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/rpc"
+	"os"
 
 	"uk.ac.bris.cs/gameoflife/gol"
 )
@@ -134,6 +135,9 @@ func (e *Engine) KeyPress(req gol.KeyPressRequest, res *gol.KeyPressReport) (err
 		break
 	default:
 		e.ReportChans[workerIP] <- report
+	}
+	if req.Key == 'k' {
+		os.Exit(1)
 	}
 	return err
 }
