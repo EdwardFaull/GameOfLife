@@ -18,10 +18,10 @@ type Engine struct {
 
 func (e *Engine) FindFreeWorker() string {
 	for k, v := range e.workersBusy {
+		fmt.Println("k = ", k, "v = ", v)
 		if !v {
 			return k
 		}
-		fmt.Println("k = ", k, "v = ", v)
 	}
 	return ""
 }
@@ -39,28 +39,6 @@ func (e *Engine) Initialise(req gol.InitRequest, res *gol.StatusReport) (err err
 	e.IPAddresses[workerIP] <- req
 	fmt.Println("Sent req")
 	e.workersBusy[workerIP] = true
-	/*
-		params := req.Params
-		if req.ShouldContinue == 0 {
-			if e.gameRunning {
-				e.killChannel <- true
-				<-e.killConfirmChannel
-				//time.Sleep(1 * time.Second)
-				e.emptyChannels()
-			}
-			go gol.Distributor(params.Params, req.Params.Alive, e.events, e.keyPressEvents, e.keyPresses, e.tickerChan, e.killChannel, e.killConfirmChannel)
-			e.gameRunning = true
-		} else if req.ShouldContinue == 1 {
-			if !e.gameRunning {
-				fmt.Println("Error: no game running. Creating new game.")
-				go gol.Distributor(params.Params, req.Params.Alive, e.events, e.keyPressEvents, e.keyPresses, e.tickerChan, e.killChannel, e.killConfirmChannel)
-				e.gameRunning = true
-			} else {
-				e.keyPresses <- 'r'
-			}
-		} else {
-			fmt.Println("Incorrect flag value for continue. Must be either 0 or 1.")
-		}*/
 	return err
 }
 
@@ -70,17 +48,13 @@ func (e *Engine) subscriber_loop(client *rpc.Client, addr chan gol.Request, fact
 		var err error
 		switch j := job.(type) {
 		case gol.InitRequest:
-			fmt.Println("InitReq received")
 			response := new(gol.StatusReport)
 			err = client.Call("Factory.Initialise", j, &response)
 		case gol.ReportRequest:
-			fmt.Println("RepReq received")
 			response := gol.TickReport{}
 			err = client.Call("Factory.Report", j, &response)
 			e.ReportChans[factoryAddr] <- response
-			fmt.Println("Sent response")
 		case gol.KeyPressRequest:
-			fmt.Println("KeyPressReq received")
 			response := gol.KeyPressReport{}
 			err = client.Call("Factory.KeyPress", j, &response)
 			e.ReportChans[factoryAddr] <- response
@@ -99,13 +73,12 @@ func (e *Engine) subscriber_loop(client *rpc.Client, addr chan gol.Request, fact
 //and will use the given callback string as the callback function whenever work
 //is available.
 func (e *Engine) subscribe(factoryAddress string) (err error) {
-	fmt.Println("Sub req passed on")
 	client, err := rpc.Dial("tcp", factoryAddress)
 	if err == nil {
-		fmt.Println("No errors. Proceeding...")
 		e.workersBusy[factoryAddress] = false
 		e.IPAddresses[factoryAddress] = make(chan gol.Request, 10)
 		e.ReportChans[factoryAddress] = make(chan gol.BaseReport, 10)
+		fmt.Println(factoryAddress, "subscribed to engine.")
 		go e.subscriber_loop(client, e.IPAddresses[factoryAddress], factoryAddress)
 	} else {
 		fmt.Println("Error subscribing ", factoryAddress)
@@ -116,7 +89,6 @@ func (e *Engine) subscribe(factoryAddress string) (err error) {
 }
 
 func (e *Engine) Subscribe(req gol.Subscription, res *gol.StatusReport) (err error) {
-	fmt.Println("Sub req received")
 	err = e.subscribe(req.FactoryAddress)
 	if err != nil {
 		//res.Message = "Error during subscription"
@@ -124,39 +96,11 @@ func (e *Engine) Subscribe(req gol.Subscription, res *gol.StatusReport) (err err
 	return err
 }
 
-func (e *Engine) emptyChannels() {
-	/*
-		for {
-			if len(e.events) > 0 {
-				<-e.events
-			}
-			if len(e.keyPresses) > 0 {
-				<-e.keyPresses
-			}
-			if len(e.keyPressEvents) > 0 {
-				<-e.keyPressEvents
-			}
-			if len(e.tickerChan) > 0 {
-				<-e.tickerChan
-			}
-			if len(e.killChannel) > 0 {
-				<-e.killChannel
-			}
-			if len(e.killConfirmChannel) > 0 {
-				<-e.killConfirmChannel
-			}
-			if len(e.events) == 0 && len(e.keyPresses) == 0 && len(e.keyPressEvents) == 0 && len(e.tickerChan) == 0 && len(e.killChannel) == 0 && len(e.killConfirmChannel) == 0 {
-				break
-			}
-		}*/
-}
-
 func (e *Engine) Report(req gol.ReportRequest, res *gol.TickReport) (err error) {
 	inboundIP := req.InboundIP
 	workerIP := e.IPLinks[inboundIP]
 	e.IPAddresses[workerIP] <- req
 	report := <-e.ReportChans[workerIP]
-	fmt.Println("Received report from factory")
 	switch r := report.(type) {
 	case gol.TickReport:
 		fmt.Println("Completed turns = ", r.Turns)
@@ -164,6 +108,10 @@ func (e *Engine) Report(req gol.ReportRequest, res *gol.TickReport) (err error) 
 		(*res).Alive = r.Alive
 		(*res).CellsCount = r.CellsCount
 		(*res).ReportType = r.ReportType
+		if r.ReportType == gol.Finished {
+			workerIP := e.IPLinks[req.InboundIP]
+			e.workersBusy[workerIP] = false
+		}
 		break
 	default:
 		e.ReportChans[workerIP] <- report

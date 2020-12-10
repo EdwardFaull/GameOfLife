@@ -141,6 +141,7 @@ func handleChannels(p Params, c distributorChannels) ([]util.Cell, int) {
 					for i := 0; i < p.Threads; i++ {
 						c.turnFinishedChannels[i] <- turn
 					}
+					//fmt.Println("TURN COMPLETE")
 				}
 			case WorkerFinalTurnComplete:
 				workersFinished++
@@ -164,6 +165,7 @@ func handleChannels(p Params, c distributorChannels) ([]util.Cell, int) {
 				} else {
 					c.keyPressEvents <- StateChange{turn, Executing, nil}
 				}
+				fmt.Println("Game paused.")
 			case 's':
 				c.keyPressEvents <- StateChange{turn, Saving, prevTurnAliveCells}
 			case 'q':
@@ -179,7 +181,8 @@ func handleChannels(p Params, c distributorChannels) ([]util.Cell, int) {
 				isPaused = false
 			}
 		case <-c.ticker:
-			c.events <- AliveCellsCount{CompletedTurns: turn, CellsCount: len(prevTurnAliveCells)}
+			fmt.Println("Sent update to channel")
+			c.events <- AliveCellsCount{CompletedTurns: turn, CellsCount: len(prevTurnAliveCells), Alive: prevTurnAliveCells}
 		case <-c.killChan:
 			for _, e := range c.workerKillChan {
 				e <- true

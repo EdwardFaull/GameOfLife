@@ -54,6 +54,7 @@ func ClientToEngineParams(p ClientParams) Params {
 func Run(p ClientParams, events chan Event, keyPresses chan rune) {
 	//Read image
 	quit := make(chan bool)
+	aliveCellsChan := make(chan []util.Cell, 10)
 	engineParams := ClientToEngineParams(p)
 	controllerChannels := makeIO(engineParams)
 	aliveCells := readImage(engineParams, controllerChannels)
@@ -72,8 +73,9 @@ func Run(p ClientParams, events chan Event, keyPresses chan rune) {
 	towork := InitRequest{Params: &initParams, ShouldContinue: p.ShouldContinue, InboundIP: util.GetOutboundIP()}
 	//Call the broker
 	client.Call(Initialise, towork, &status)
-	go ticker(client, events, quit)
-	go keyboard(client, keyPresses, events, engineParams, controllerChannels, quit)
+	go updateImage(events, aliveCellsChan)
+	go ticker(client, events, quit, aliveCellsChan)
+	go keyboard(client, keyPresses, events, engineParams, controllerChannels, quit, aliveCellsChan)
 }
 
 func readImage(p Params, c controllerChannels) []util.Cell {
@@ -112,8 +114,8 @@ func readImage(p Params, c controllerChannels) []util.Cell {
 	return aliveCells
 }
 
-func ticker(client *rpc.Client, events chan Event, quit chan bool) {
-	ticker := time.NewTicker(2 * time.Second)
+func ticker(client *rpc.Client, events chan Event, quit chan bool, aliveCellsChan chan<- []util.Cell) {
+	ticker := time.NewTicker(2000 * time.Millisecond)
 	isDone := false
 	for {
 		fmt.Println("Ticking...")
@@ -124,6 +126,7 @@ func ticker(client *rpc.Client, events chan Event, quit chan bool) {
 			switch aliveReport.ReportType {
 			case Ticking:
 				events <- AliveCellsCount{CompletedTurns: aliveReport.Turns, CellsCount: aliveReport.CellsCount}
+				aliveCellsChan <- aliveReport.Alive
 			case Finished:
 				events <- FinalTurnComplete{CompletedTurns: aliveReport.Turns, Alive: aliveReport.Alive}
 				events <- StateChange{aliveReport.Turns, Quitting, nil}
@@ -140,8 +143,9 @@ func ticker(client *rpc.Client, events chan Event, quit chan bool) {
 		}
 	}
 }
+
 func keyboard(client *rpc.Client, keyPresses chan rune, events chan Event,
-	p Params, c controllerChannels, quit chan bool) {
+	p Params, c controllerChannels, quit chan bool, aliveCellsChan chan<- []util.Cell) {
 	previousAliveCells := []util.Cell{}
 	isDone := false
 	//isPaused := false
@@ -186,6 +190,21 @@ func keyboard(client *rpc.Client, keyPresses chan rune, events chan Event,
 		if isDone {
 			break
 		}
+	}
+}
+
+func updateImage(events chan<- Event, aliveCellsChan <-chan []util.Cell) {
+	previousAliveCells := []util.Cell{}
+	for {
+		newAliveCells := <-aliveCellsChan
+		for _, cell := range previousAliveCells {
+			events <- CellFlipped{CompletedTurns: 0, Cell: cell}
+		}
+		for _, cell := range newAliveCells {
+			events <- CellFlipped{CompletedTurns: 0, Cell: cell}
+		}
+		events <- TurnComplete{CompletedTurns: 0}
+		previousAliveCells = newAliveCells
 	}
 }
 

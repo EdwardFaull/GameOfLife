@@ -1,6 +1,8 @@
 package gol
 
 import (
+	"fmt"
+
 	"uk.ac.bris.cs/gameoflife/util"
 )
 
@@ -74,7 +76,7 @@ func worker(world [][]byte, p workerParams, c workerChannels, workerID int) ([][
 			world, aliveCells = calculateNextState(workerID, p, world, c, turn, upperLine, lowerLine)
 			//Send completion event to distributor
 			c.events <- WorkerTurnComplete{CompletedTurns: turn, Alive: aliveCells}
-			//fmt.Println("Worker", workerID, "completed turn", turn)
+			fmt.Println("Worker", workerID, "completed turn", turn)
 			canContinue := false
 			for {
 				select {

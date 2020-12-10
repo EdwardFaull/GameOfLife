@@ -20,6 +20,7 @@ type Event interface {
 type AliveCellsCount struct { // implements Event
 	CompletedTurns int
 	CellsCount     int
+	Alive          []util.Cell
 }
 
 // ImageOutputComplete is an Event notifying the user about the completion of output.
