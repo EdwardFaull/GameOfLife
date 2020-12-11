@@ -26,10 +26,12 @@ type distributorChannels struct {
 	fetchUpperResponse   chan<- Filler
 }
 
-// distributor divides the work between workers and interacts with other goroutines.
+//Distributor divides the work between workers and interacts with other goroutines.
 func Distributor(p Params, alive []util.Cell, events chan Event, keyPressEvents chan Event, keyPresses chan rune,
 	ticker chan bool, killChan <-chan bool, killConfirmChan chan<- bool, lowerIP string, upperIP string,
 	fetchSignal chan bool, fetchLowerResponse chan<- Filler, fetchUpperResponse chan<- Filler, startY int) ([]util.Cell, int) {
+
+	//Initialise world
 	world := make([][]byte, p.ImageHeight)
 	for i := range world {
 		world[i] = make([]byte, p.ImageWidth)
@@ -37,23 +39,27 @@ func Distributor(p Params, alive []util.Cell, events chan Event, keyPressEvents 
 	for _, c := range alive {
 		world[c.Y-startY][c.X] = 255
 	}
+
+	//Dial up neighbouring factories
 	lowerClient, err := rpc.Dial("tcp", lowerIP)
 	upperClient, err := rpc.Dial("tcp", upperIP)
 	if err != nil {
 		fmt.Println("Error:", err)
 	}
 
-	lowerClientFetchRequest := make(chan bool, 10)
-	lowerClientFetchLine := make(chan []byte, 10)
+	//Set fetching goroutines off
+	lowerClientFetchRequest := make(chan bool)
+	lowerClientFetchLine := make(chan []byte)
 	go fetchDistributedFillers(lowerClient, lowerClientFetchRequest, lowerClientFetchLine, false)
 
-	upperClientFetchRequest := make(chan bool, 10)
-	upperClientFetchLine := make(chan []byte, 10)
+	upperClientFetchRequest := make(chan bool)
+	upperClientFetchLine := make(chan []byte)
 	go fetchDistributedFillers(upperClient, upperClientFetchRequest, upperClientFetchLine, true)
 
 	workerEvents := make(chan Event, 1000)
 	globalFiller := make(chan Filler, 10)
 
+	//Create worker threads
 	c := distributorChannels{
 		events:               events,
 		keyPressEvents:       keyPressEvents,
@@ -73,11 +79,19 @@ func Distributor(p Params, alive []util.Cell, events chan Event, keyPressEvents 
 	}
 
 	fmt.Println("Began new GoL")
-	//TODO: Initialise semaphores for locking finished workers
 	turn := 0
-	threadHeight := float32(p.ImageHeight) / float32(p.Threads)
+	createWorkers(p, c, world, lowerClientFetchRequest, lowerClientFetchLine, upperClientFetchRequest, upperClientFetchLine)
 
-	//TODO: Split image, send worker goroutines
+	aliveCells, turn := handleChannels(p, c)
+
+	return aliveCells, turn
+}
+
+//Creates worker threads
+func createWorkers(p Params, c distributorChannels, world [][]byte,
+	lowerClientFetchRequest chan bool, lowerClientFetchLine chan []byte,
+	upperClientFetchRequest chan bool, upperClientFetchLine chan []byte) {
+	threadHeight := float32(p.ImageHeight) / float32(p.Threads)
 	for t := 0; t < p.Threads; t++ {
 		endY := int(float32(t+1) * threadHeight)
 		if t == p.Threads-1 {
@@ -85,6 +99,7 @@ func Distributor(p Params, alive []util.Cell, events chan Event, keyPressEvents 
 		}
 		startY := int(float32(t) * threadHeight)
 
+		//Create worker channels and store in distributor channels
 		fillerElement := make(chan Filler, 10)
 		c.fillers[t] = fillerElement
 
@@ -116,8 +131,8 @@ func Distributor(p Params, alive []util.Cell, events chan Event, keyPressEvents 
 			Threads:     p.Threads,
 		}
 		workerChannels := workerChannels{
-			events:          workerEvents,
-			globalFiller:    globalFiller,
+			events:          c.workerEvents,
+			globalFiller:    c.globalFiller,
 			workerFiller:    fillerElement,
 			finishedChannel: finishedChannel,
 			keyPresses:      keyPress,
@@ -127,12 +142,10 @@ func Distributor(p Params, alive []util.Cell, events chan Event, keyPressEvents 
 		}
 		go worker(world[startY:endY], workerParams, workerChannels, t)
 	}
-
-	aliveCells, turn := handleChannels(p, c)
-
-	return aliveCells, turn
 }
 
+//Splits a filler sent by a thread to distributor into its upper and lower lines,
+//then sends them to its neighbouring threads
 func sendLinesToWorker(p Params, f Filler, c distributorChannels) {
 	worker := f.workerID
 	upperWorker := (worker + 1) % p.Threads
@@ -140,7 +153,7 @@ func sendLinesToWorker(p Params, f Filler, c distributorChannels) {
 	if lowerWorker < 0 {
 		lowerWorker = lowerWorker + p.Threads
 	}
-
+	//If on the edge of the factory, wait until a fetch signal is received, the send line to neighbouring factory
 	if worker == 0 || worker == p.Threads-1 {
 		for {
 			b := <-c.fetchSignal
@@ -159,11 +172,13 @@ func sendLinesToWorker(p Params, f Filler, c distributorChannels) {
 			}
 		}
 	} else {
+		//If not, send filler lines normally to neighbouring threads
 		c.fillers[lowerWorker] <- Filler{lowerLine: f.lowerLine, upperLine: nil, workerID: worker}
 		c.fillers[upperWorker] <- Filler{lowerLine: nil, upperLine: f.upperLine, workerID: worker}
 	}
 }
 
+//Fetches fillers from the RPC client at the beginning of each turn, then sends them to their respective worker thread.
 func fetchDistributedFillers(client *rpc.Client, fetchRequest <-chan bool, fetchLine chan<- []byte, upperOrLower bool) {
 	for {
 		<-fetchRequest
@@ -173,6 +188,7 @@ func fetchDistributedFillers(client *rpc.Client, fetchRequest <-chan bool, fetch
 	}
 }
 
+//Handles input from all channels from the calling factory and created worker threads
 func handleChannels(p Params, c distributorChannels) ([]util.Cell, int) {
 	isDone := false
 	aliveCells := []util.Cell{}
@@ -186,6 +202,7 @@ func handleChannels(p Params, c distributorChannels) ([]util.Cell, int) {
 
 	for {
 		select {
+		//If receiving an event from a worker thread
 		case event := <-c.workerEvents:
 			switch e := event.(type) {
 			case WorkerTurnComplete:
@@ -195,9 +212,8 @@ func handleChannels(p Params, c distributorChannels) ([]util.Cell, int) {
 					workersCompletedTurn = 0
 					prevTurnAliveCells = workingAliveCells
 					workingAliveCells = nil
-					//Send all clear to workers to start next turn
-					fmt.Println("Turn Complete")
 					turn++
+					//Send all clear to workers to start next turn
 					for i := 0; i < p.Threads; i++ {
 						c.turnFinishedChannels[i] <- turn
 					}
@@ -210,8 +226,10 @@ func handleChannels(p Params, c distributorChannels) ([]util.Cell, int) {
 					isDone = true
 				}
 			}
+		//If a thread sends a filler back to the distributor for redistribution
 		case f := <-c.globalFiller:
 			sendLinesToWorker(p, f, c)
+		//If the user presses a key
 		case k := <-c.keyPresses:
 			switch k {
 			case 'p':
@@ -232,6 +250,7 @@ func handleChannels(p Params, c distributorChannels) ([]util.Cell, int) {
 					kp <- k
 				}
 				isPaused = true
+			//Resume the game (used for restarting a closed game)
 			case 'r':
 				for _, kp := range c.workerKeyPresses {
 					kp <- k
@@ -240,8 +259,10 @@ func handleChannels(p Params, c distributorChannels) ([]util.Cell, int) {
 			case 'k':
 				c.keyPressEvents <- StateChange{turn, Quitting, prevTurnAliveCells}
 			}
+		//Send the engine updates on the GoL
 		case <-c.ticker:
 			c.events <- AliveCellsCount{CompletedTurns: turn, CellsCount: len(prevTurnAliveCells), Alive: prevTurnAliveCells}
+		//Shut down worker threads
 		case <-c.killChan:
 			for _, e := range c.workerKillChan {
 				e <- true

@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"runtime"
+	"time"
 
 	"uk.ac.bris.cs/gameoflife/gol"
 	"uk.ac.bris.cs/gameoflife/sdl"
@@ -11,12 +12,6 @@ import (
 func main() {
 	runtime.LockOSThread()
 	var params gol.ClientParams
-
-	flag.IntVar(
-		&params.Threads,
-		"t",
-		8,
-		"Specify the number of worker threads to use. Defaults to 8.")
 
 	flag.IntVar(
 		&params.ImageWidth,
@@ -39,14 +34,28 @@ func main() {
 	flag.IntVar(
 		&params.Factories,
 		"factories",
-		2,
-		"Specify the number of turns to process. Defaults to 10000000000.")
+		1,
+		"Specify the factories the engine should allocate the controller. Defaults to 1.\nFeature experimental, so keep at 1 for no bugs")
+
+	flag.IntVar(
+		&params.Testing,
+		"testing",
+		1,
+		"Flag which, if 0, will assign default values to the GoL for testing purposes.")
 
 	flag.IntVar(
 		&params.ShouldContinue,
 		"c",
 		0,
 		"Specify if the controller should resume the previous game of life. 1 to continue, 0 to create a new game. Defaults to 0")
+
+	var tickFrequency int
+	flag.IntVar(
+		&tickFrequency,
+		"tick",
+		2000,
+		"The rate at which the controller asks engine for an update in milliseconds. Defaults to 2000ms")
+	params.TickFrequency = time.Duration(tickFrequency)
 
 	brokerAddr := flag.String(
 		"broker",

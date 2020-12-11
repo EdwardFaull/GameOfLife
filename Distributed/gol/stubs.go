@@ -26,7 +26,7 @@ type InitRequest struct {
 	Params         Params
 	ShouldContinue int
 	InboundIP      string
-	Workers        int
+	Factories      int
 	UpperIP        string
 	LowerIP        string
 	StartY         int
@@ -77,4 +77,12 @@ type FetchRequest struct {
 
 type FetchReport struct {
 	Line []byte
+}
+
+type SyncRequest struct {
+	Turn      int
+	InboundIP string
+}
+
+type SyncReport struct {
 }

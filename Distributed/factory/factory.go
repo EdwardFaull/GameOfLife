@@ -26,14 +26,18 @@ type Factory struct {
 	gameRunning        bool
 }
 
+//Initialise creates a new distributor to handle the incoming request.
+//If the shouldContinue flag is up, it will resume whatever GoL it is already running.
 func (f *Factory) Initialise(req gol.InitRequest, res *gol.StatusReport) (err error) {
 	params := req.Params
 	f.offset = req.StartY
+	//Hard-codes the number of threads to be 12, unless if there's not enough space.
 	if params.ImageHeight < 12 {
 		params.Threads = params.ImageHeight / 2
 	} else {
 		params.Threads = 12
 	}
+	//If req doesn't want to continue an existing game, empties all channels
 	if req.ShouldContinue == 0 {
 		if f.gameRunning {
 			f.killChannel <- true
@@ -43,7 +47,6 @@ func (f *Factory) Initialise(req gol.InitRequest, res *gol.StatusReport) (err er
 		f.offset = req.StartY
 		go gol.Distributor(params, req.Alive, f.events, f.keyPressEvents, f.keyPresses, f.tickerChan, f.killChannel, f.killConfirmChannel,
 			req.LowerIP, req.UpperIP, f.fetchSignal, f.fetchLowerResponse, f.fetchUpperResponse, req.StartY)
-		fmt.Println("Created new Distributor")
 		f.gameRunning = true
 	} else if req.ShouldContinue == 1 {
 		if !f.gameRunning {
@@ -61,6 +64,8 @@ func (f *Factory) Initialise(req gol.InitRequest, res *gol.StatusReport) (err er
 	return
 }
 
+//emptyChannels removes all items from the factory's channels.
+//Called before beginning a new GoL to ensure nothing is left over from before.
 func (f *Factory) emptyChannels() {
 	for {
 		if len(f.events) > 0 {
@@ -89,6 +94,8 @@ func (f *Factory) emptyChannels() {
 	}
 }
 
+//Report handles ReportRequests sent to the factory. It asks the distributor for an update,
+//and when sent back updates the TickReport and returns.
 func (f *Factory) Report(req gol.ReportRequest, res *gol.TickReport) (err error) {
 	f.tickerChan <- true
 	for {
@@ -113,6 +120,8 @@ func (f *Factory) Report(req gol.ReportRequest, res *gol.TickReport) (err error)
 	}
 }
 
+//offsetCells adds a Y-axis offset to each cell passed into it, in order to
+//make the values correct depending on which factory is operating.
 func offsetCells(offset int, alive []util.Cell) []util.Cell {
 	offsetAlive := []util.Cell{}
 	for _, c := range alive {
@@ -121,6 +130,7 @@ func offsetCells(offset int, alive []util.Cell) []util.Cell {
 	return offsetAlive
 }
 
+//KeyPress handles KeyPressRequests sent to the factory.
 func (f *Factory) KeyPress(req gol.KeyPressRequest, res *gol.KeyPressReport) (err error) {
 	f.keyPresses <- req.Key
 	select {
@@ -130,22 +140,22 @@ func (f *Factory) KeyPress(req gol.KeyPressRequest, res *gol.KeyPressReport) (er
 			(*res).Alive = t.Alive
 			(*res).Turns = t.CompletedTurns
 			(*res).State = t.NewState
-			fmt.Println("Got keypress event")
 		}
 	}
 	return err
 }
 
+//Kill shuts down the distributor and then cleanly closes the factory.
 func (f *Factory) Kill(req gol.KillRequest, res *gol.StatusReport) (err error) {
-	fmt.Println("Killing distributor")
 	f.killChannel <- true
-	fmt.Println("Sent killcode to distributor")
 	<-f.killConfirmChannel
-	fmt.Println("Killed distributor")
 	go killFactory()
 	return err
 }
 
+//Fetch is called by neighbouring factories. It receives a filler line from the distributor,
+//and then sends it back to its neighbour. The line returned depends on the value of req.UpperOrLower.
+//If = true, it sends the upper line, if = false, it sends the lower line.
 func (f *Factory) Fetch(req gol.FetchRequest, res *gol.FetchReport) (err error) {
 	f.fetchSignal <- req.UpperOrLower
 	var filler gol.Filler
@@ -161,6 +171,7 @@ func (f *Factory) Fetch(req gol.FetchRequest, res *gol.FetchReport) (err error) 
 	return err
 }
 
+//Cleanly closes the program.
 func killFactory() {
 	time.Sleep(1 * time.Second)
 	os.Exit(1)
@@ -173,7 +184,8 @@ func main() {
 	client, _ := rpc.Dial("tcp", *brokerAddr)
 	status := new(gol.StatusReport)
 	rpc.Register(&Factory{make(chan gol.Event, 1000), make(chan rune, 10), make(chan gol.Event, 1000), make(chan bool, 10),
-		make(chan bool, 1), make(chan bool, 1), make(chan bool, 10), make(chan gol.Filler, 10), make(chan gol.Filler, 10), 0, false})
+		make(chan bool, 1), make(chan bool, 1), make(chan bool, 10), make(chan gol.Filler, 10),
+		make(chan gol.Filler, 10), 0, false})
 	fmt.Println(*pAddr)
 	listener, err := net.Listen("tcp", ":"+*pAddr)
 	if err != nil {

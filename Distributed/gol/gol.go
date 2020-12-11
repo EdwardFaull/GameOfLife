@@ -26,6 +26,8 @@ type ClientParams struct {
 	BrokerAddr     string
 	ShouldContinue int
 	Factories      int
+	Testing        int
+	TickFrequency  time.Duration
 }
 
 type controllerChannels struct {
@@ -62,6 +64,12 @@ func Run(p ClientParams, events chan Event, keyPresses chan rune) {
 	aliveCells := readImage(engineParams, controllerChannels)
 	mutex := &sync.Mutex{}
 
+	if p.Testing == 0 {
+		p.ShouldContinue = 0
+		p.Factories = 2
+		p.BrokerAddr = "192.168.0.2:8030"
+		p.TickFrequency = 2000
+	}
 	//Dial broker address.
 	client, err := rpc.Dial("tcp", (p.BrokerAddr))
 	if err != nil {
@@ -74,15 +82,16 @@ func Run(p ClientParams, events chan Event, keyPresses chan rune) {
 		Params:         engineParams,
 		ShouldContinue: p.ShouldContinue,
 		InboundIP:      util.GetOutboundIP(),
-		Workers:        p.Factories,
+		Factories:      p.Factories,
 	}
 	//Call the broker
 	client.Call(Initialise, towork, &status)
 	go updateImage(events, aliveCellsChan, mutex)
-	go ticker(client, events, quit, aliveCellsChan, mutex)
+	go ticker(engineParams, controllerChannels, p.TickFrequency, client, events, quit, aliveCellsChan, mutex)
 	go keyboard(client, keyPresses, events, engineParams, controllerChannels, quit, aliveCellsChan, mutex)
 }
 
+//Read image in from folder
 func readImage(p Params, c controllerChannels) []util.Cell {
 
 	aliveCells := []util.Cell{}
@@ -119,13 +128,16 @@ func readImage(p Params, c controllerChannels) []util.Cell {
 	return aliveCells
 }
 
-func ticker(client *rpc.Client, events chan Event, quit chan bool, aliveCellsChan chan<- []util.Cell, mutex *sync.Mutex) {
-	ticker := time.NewTicker(100 * time.Millisecond)
+//Handles regular updates from engine.
+func ticker(p Params, c controllerChannels, tickFrequency time.Duration, client *rpc.Client, events chan Event,
+	quit chan bool, aliveCellsChan chan<- []util.Cell, mutex *sync.Mutex) {
+	ticker := time.NewTicker(tickFrequency * time.Millisecond)
 	isDone := false
 	for {
 		select {
 		case <-ticker.C:
 			aliveReport := TickReport{}
+			fmt.Println("Ticking...")
 			client.Call(Report, ReportRequest{InboundIP: util.GetOutboundIP()}, &aliveReport)
 			switch aliveReport.ReportType {
 			case Ticking:
@@ -134,6 +146,9 @@ func ticker(client *rpc.Client, events chan Event, quit chan bool, aliveCellsCha
 			case Finished:
 				events <- FinalTurnComplete{CompletedTurns: aliveReport.Turns, Alive: aliveReport.Alive}
 				events <- StateChange{aliveReport.Turns, Quitting, nil}
+				outputImage(p, c, aliveReport.Alive, aliveReport.Turns)
+				c.command <- ioCheckIdle
+				<-c.ioIdle
 				mutex.Lock()
 				close(events)
 				mutex.Unlock()
@@ -150,6 +165,7 @@ func ticker(client *rpc.Client, events chan Event, quit chan bool, aliveCellsCha
 	}
 }
 
+//Handles keypresses from the user and calls the engine on keypresses
 func keyboard(client *rpc.Client, keyPresses chan rune, events chan Event,
 	p Params, c controllerChannels, quit chan bool, aliveCellsChan chan<- []util.Cell, mutex *sync.Mutex) {
 	isDone := false
@@ -198,6 +214,7 @@ func keyboard(client *rpc.Client, keyPresses chan rune, events chan Event,
 	}
 }
 
+//Updates SDL view
 func updateImage(events chan<- Event, aliveCellsChan <-chan []util.Cell, mutex *sync.Mutex) {
 	previousAliveCells := []util.Cell{}
 	for {
@@ -215,6 +232,7 @@ func updateImage(events chan<- Event, aliveCellsChan <-chan []util.Cell, mutex *
 	}
 }
 
+//Save image to /out folder
 func outputImage(p Params, c controllerChannels, aliveCells []util.Cell, turns int) {
 	c.command <- ioOutput
 	s := fmt.Sprintf("%dx%dx%d", p.ImageWidth, p.ImageHeight, turns)
@@ -239,6 +257,7 @@ func outputImage(p Params, c controllerChannels, aliveCells []util.Cell, turns i
 	}
 }
 
+//Starts the IO goroutine and returns a controllerChannels structure for later use.
 func makeIO(engineParams Params) controllerChannels {
 	ioCommand := make(chan ioCommand)
 	ioIdle := make(chan bool)

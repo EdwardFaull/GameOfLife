@@ -40,31 +40,22 @@ func (f *Filler) GetUpperLine() []byte {
 	return f.upperLine
 }
 
+//Runs game of life on a section of the world
 func worker(world [][]byte, p workerParams, c workerChannels, workerID int) ([][]byte, int) {
 
 	isPaused := false
-	//For all initially alive cells send a CellFlipped Event.
-	/*for y, elem := range world {
-		for x, cell := range elem {
-			if cell == 255 {
-				d := util.Cell{X: x, Y: y + p.StartY}
-				cellFlip := CellFlipped{CompletedTurns: 0, Cell: d}
-				c.events <- cellFlip
-			}
-		}
-	}
-	*/
+
 	turn := 0
 	aliveCells := calculateAliveCells(p, world, workerID)
 
 	//Executes all turns of the Game of Life.
 	for {
-		//Send top and bottom arrays to distributor
 		if !isPaused {
-			if turn > p.Turns || (turn == 0 && p.Turns == 0) {
+			if turn >= p.Turns || (turn == 0 && p.Turns == 0) {
 				break
 			}
 			aliveCells = []util.Cell{}
+			//Send top and bottom arrays to distributor, and get neighbouring arrays out
 			upperLine, lowerLine := getFillers(p, c, world, workerID)
 			//Execute turn of game
 			world, aliveCells = calculateNextState(workerID, p, world, c, turn, upperLine, lowerLine)
@@ -72,6 +63,7 @@ func worker(world [][]byte, p workerParams, c workerChannels, workerID int) ([][
 			c.events <- WorkerTurnComplete{CompletedTurns: turn, Alive: aliveCells}
 			turn++
 		}
+		//Handle any keypresses, and block until all other threads have completed their turn
 		select {
 		case k := <-c.keyPresses:
 			switch k {
@@ -95,11 +87,13 @@ func worker(world [][]byte, p workerParams, c workerChannels, workerID int) ([][
 	return world, turn
 }
 
+//Sends a filler containing the thread's edges into the distributor, and retrieves the neighbouring thread's edges.
 func getFillers(p workerParams, c workerChannels, world [][]byte, workerID int) ([]byte, []byte) {
 	c.globalFiller <- Filler{lowerLine: world[0], upperLine: world[p.ImageHeight-1], workerID: workerID}
 
 	upperLine := []byte{}
 	lowerLine := []byte{}
+	//If on the edge of the factory, fetch from the network channel instead (c.fetchResponse)
 	if workerID == 0 || workerID == p.Threads-1 {
 		c.fetchRequest <- true
 		filler := <-c.fetchResponse
@@ -118,7 +112,7 @@ func getFillers(p workerParams, c workerChannels, world [][]byte, workerID int) 
 			}
 		}
 	} else {
-		//Receive lines outside world's boundaries for use in this worker
+		//Receive lines outside thread's boundaries for use in this worker
 		receivedFiller := <-c.workerFiller
 		receivedFiller2 := <-c.workerFiller
 		upperID := (workerID + 1) % p.Threads
@@ -134,25 +128,7 @@ func getFillers(p workerParams, c workerChannels, world [][]byte, workerID int) 
 	return upperLine, lowerLine
 }
 
-func createNewWorld(world [][]byte, p workerParams) [][]byte {
-	newWorld := make([][]byte, p.ImageHeight)
-	for i := range newWorld {
-		newWorld[i] = make([]byte, p.ImageWidth)
-		for j := range newWorld[i] {
-			newWorld[i][j] = world[i][j]
-		}
-	}
-	return newWorld
-}
-
-func duplicateArray(array []byte, p workerParams) []byte {
-	newArray := make([]byte, p.ImageWidth)
-	for i := range newArray {
-		newArray[i] = array[i]
-	}
-	return newArray
-}
-
+//Calculates the next state of the world.
 func calculateNextState(id int, p workerParams, world [][]byte, c workerChannels,
 	completedTurns int, upperLine []byte, lowerLine []byte) ([][]byte, []util.Cell) {
 	aliveCells := []util.Cell{}
@@ -168,14 +144,12 @@ func calculateNextState(id int, p workerParams, world [][]byte, c workerChannels
 				if ln == 3 {
 					nB = 255
 					aliveCells = append(aliveCells, util.Cell{X: x, Y: y + p.StartY})
-					sendFlippedEvent(x, y+p.StartY, completedTurns, c)
 				} else {
 					nB = 0
 				}
 			} else {
 				if ln < 2 || ln > 3 {
 					nB = 0
-					sendFlippedEvent(x, y+p.StartY, completedTurns, c)
 				} else {
 					aliveCells = append(aliveCells, util.Cell{X: x, Y: y + p.StartY})
 					nB = 255
@@ -188,11 +162,7 @@ func calculateNextState(id int, p workerParams, world [][]byte, c workerChannels
 	return nworld, aliveCells
 }
 
-func sendFlippedEvent(x int, y int, completedTurns int, c workerChannels) {
-	cell := util.Cell{X: x, Y: y}
-	c.events <- CellFlipped{CompletedTurns: completedTurns, Cell: cell}
-}
-
+//Gets a list of all cells that are alive.
 func calculateAliveCells(p workerParams, world [][]byte, workerID int) []util.Cell {
 	alive := []util.Cell{}
 	for y := 0; y < p.ImageHeight; y++ {
@@ -206,6 +176,7 @@ func calculateAliveCells(p workerParams, world [][]byte, workerID int) []util.Ce
 	return alive
 }
 
+//Gets the number of neighbours of a cell that are alive.
 func calculateAliveNeighbours(id int, h int, w int, world [][]byte, x int, y int, upperLine []byte, lowerLine []byte) int {
 	ans := 0
 	up := y + 1
