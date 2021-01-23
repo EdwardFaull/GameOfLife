@@ -1,3 +1,7 @@
+Game Of Life Simulator by Edward Faull and Alice Ferreira
+
+This repository includes three Game Of Life (GoL) simulators - serial, concurrent, and distributed implementations. This was produced for our Year 2 Computer Systems A coursework that made up 80% of the mark for the module.
+
 # CSA Coursework: Game of Life
 
 **IMPORTANT: Monday 16.11 at 10:00 - COURSEWORK Q&A on Teams**
